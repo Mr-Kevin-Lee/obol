@@ -1,0 +1,161 @@
+use serde::{Deserialize, Serialize};
+
+/// On-disk snapshot schema (spec §11.2). This is the flat, versioned DTO
+/// shape snapshots are stored as — the storage layer converts `Account`
+/// trait objects (see `account.rs`, D11) to/from this shape at the
+/// serialization boundary.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct Snapshot {
+    pub schema_version: u32,
+    pub snapshot_id: String,
+    pub created_at: String,
+    pub accounts: Vec<AccountRecord>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct AccountRecord {
+    pub account_key: String,
+    pub source_id: String,
+    pub institution: String,
+    pub category: Category,
+    #[serde(rename = "type")]
+    pub account_type: String,
+    pub balance: Option<f64>,
+    pub currency: String,
+    pub status: Status,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub error_message: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum Category {
+    Asset,
+    Liability,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum Status {
+    Ok,
+    Error,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn ok_record() -> AccountRecord {
+        AccountRecord {
+            account_key: "sha256:9f2a...".into(),
+            source_id: "chase_checking".into(),
+            institution: "Chase".into(),
+            category: Category::Asset,
+            account_type: "checking".into(),
+            balance: Some(4213.55),
+            currency: "USD".into(),
+            status: Status::Ok,
+            error_message: None,
+        }
+    }
+
+    fn error_record() -> AccountRecord {
+        AccountRecord {
+            account_key: "sha256:71bd...".into(),
+            source_id: "apple_card".into(),
+            institution: "Goldman Sachs".into(),
+            category: Category::Liability,
+            account_type: "credit_card".into(),
+            balance: None,
+            currency: "USD".into(),
+            status: Status::Error,
+            error_message: Some("Manual entry not provided for this run".into()),
+        }
+    }
+
+    #[test]
+    fn ok_record_round_trips() {
+        let record = ok_record();
+        let json = serde_json::to_string(&record).unwrap();
+        let back: AccountRecord = serde_json::from_str(&json).unwrap();
+        assert_eq!(record, back);
+    }
+
+    #[test]
+    fn error_record_round_trips() {
+        let record = error_record();
+        let json = serde_json::to_string(&record).unwrap();
+        let back: AccountRecord = serde_json::from_str(&json).unwrap();
+        assert_eq!(record, back);
+    }
+
+    #[test]
+    fn ok_record_omits_error_message_field() {
+        let json = serde_json::to_string(&ok_record()).unwrap();
+        assert!(!json.contains("error_message"));
+    }
+
+    #[test]
+    fn error_record_includes_error_message_field() {
+        let json = serde_json::to_string(&error_record()).unwrap();
+        assert!(json.contains("error_message"));
+    }
+
+    #[test]
+    fn full_snapshot_round_trips() {
+        let snapshot = Snapshot {
+            schema_version: 1,
+            snapshot_id: "b3f1-test".into(),
+            created_at: "2026-06-30T09:15:00-07:00".into(),
+            accounts: vec![ok_record(), error_record()],
+        };
+        let json = serde_json::to_string(&snapshot).unwrap();
+        let back: Snapshot = serde_json::from_str(&json).unwrap();
+        assert_eq!(snapshot, back);
+    }
+
+    #[test]
+    fn deserializes_the_spec_example_fixture() {
+        let fixture = r#"
+        {
+          "schema_version": 1,
+          "snapshot_id": "b3f1...(uuid)",
+          "created_at": "2026-06-30T09:15:00-07:00",
+          "accounts": [
+            {
+              "account_key": "sha256:9f2a...",
+              "source_id": "chase_checking",
+              "institution": "Chase",
+              "category": "asset",
+              "type": "checking",
+              "balance": 4213.55,
+              "currency": "USD",
+              "status": "ok"
+            },
+            {
+              "account_key": "sha256:71bd...",
+              "source_id": "apple_card",
+              "institution": "Goldman Sachs",
+              "category": "liability",
+              "type": "credit_card",
+              "balance": null,
+              "currency": "USD",
+              "status": "error",
+              "error_message": "Manual entry not provided for this run"
+            }
+          ]
+        }
+        "#;
+        let snapshot: Snapshot = serde_json::from_str(fixture).unwrap();
+        assert_eq!(snapshot.schema_version, 1);
+        assert_eq!(snapshot.accounts.len(), 2);
+        assert_eq!(snapshot.accounts[0].status, Status::Ok);
+        assert_eq!(snapshot.accounts[0].balance, Some(4213.55));
+        assert_eq!(snapshot.accounts[1].status, Status::Error);
+        assert_eq!(snapshot.accounts[1].balance, None);
+        assert_eq!(
+            snapshot.accounts[1].error_message.as_deref(),
+            Some("Manual entry not provided for this run")
+        );
+    }
+}
