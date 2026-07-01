@@ -1,0 +1,4 @@
+[package]
+name = "obol-core"
+version.workspace = true
+edition.workspace = true

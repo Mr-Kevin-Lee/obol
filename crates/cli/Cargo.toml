@@ -1,0 +1,11 @@
+[package]
+name = "obol"
+version.workspace = true
+edition.workspace = true
+
+[[bin]]
+name = "obol"
+path = "src/main.rs"
+
+[dependencies]
+obol-core = { path = "../core" }
