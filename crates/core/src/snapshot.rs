@@ -32,6 +32,11 @@ pub struct AccountRecord {
 pub enum Category {
     Asset,
     Liability,
+    /// Forward compatibility (decision D14): a category introduced by a
+    /// newer schema version than this build understands falls back here
+    /// instead of failing deserialization of the whole snapshot.
+    #[serde(other)]
+    Unknown,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -39,6 +44,10 @@ pub enum Category {
 pub enum Status {
     Ok,
     Error,
+    /// Forward compatibility (decision D14): same rationale as
+    /// `Category::Unknown`.
+    #[serde(other)]
+    Unknown,
 }
 
 #[cfg(test)]
