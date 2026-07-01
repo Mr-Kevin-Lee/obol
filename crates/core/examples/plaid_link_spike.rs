@@ -76,8 +76,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         let Some(public_token) = session.public_token() else {
             println!(
-                "Session finished but no public_token — looks like the flow was \
-                 abandoned or hit an error. Stopping."
+                "\nSession finished but no public_token — the flow was abandoned or hit \
+                 an error. Full event trail:\n{}",
+                serde_json::to_string_pretty(&session.events).unwrap_or_default()
             );
             return Ok(());
         };
@@ -96,10 +97,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         for account in &balances.accounts {
             println!(
                 "  {} ({:?}): current={:?} available={:?}",
-                account.name,
-                account.subtype,
-                account.balances.current,
-                account.balances.available
+                account.name, account.subtype, account.balances.current, account.balances.available
             );
         }
 

@@ -1,0 +1,113 @@
+{
+  "_note": "Events array only, from a Link session that finished with no public_token — the flow exited during Chase's OAuth consent screen (exit_status: requires_oauth), most likely a closed tab/cancel rather than a rejected-credentials error. Captured from crates/core/examples/plaid_link_spike.rs's 'session finished but no public_token' branch, which prints session.events rather than the full raw API response. See link_token_get.json for a full successful response including the outer link_sessions[] wrapper (link_session_id/started_at/finished_at/results).",
+  "events": [
+    {
+      "event_id": "4ffa1e34-1fe5-4f5b-9c67-42b7ebf99536",
+      "event_metadata": {
+        "exit_status": "requires_oauth",
+        "institution_id": "ins_56",
+        "institution_name": "Chase",
+        "request_id": "01ba1411e1d3824"
+      },
+      "event_name": "EXIT",
+      "timestamp": "2026-07-01T19:45:45Z"
+    },
+    {
+      "event_id": "5fad5f08-f2e0-469c-9115-6741aaf40d53",
+      "event_metadata": {
+        "institution_id": "ins_56",
+        "institution_name": "Chase",
+        "request_id": "42ad1a04d163782",
+        "view_name": "EXIT"
+      },
+      "event_name": "TRANSITION_VIEW",
+      "timestamp": "2026-07-01T19:45:42Z"
+    },
+    {
+      "event_id": "a97b24f0-ddbc-490a-8f3b-7886cd3a35fd",
+      "event_metadata": {
+        "institution_id": "ins_56",
+        "institution_name": "Chase",
+        "request_id": "09dfac26c33e62b",
+        "view_name": "OAUTH"
+      },
+      "event_name": "TRANSITION_VIEW",
+      "timestamp": "2026-07-01T19:45:28Z"
+    },
+    {
+      "event_id": "969ccbc9-ea5e-497a-8925-8fbe9142e6eb",
+      "event_metadata": {
+        "institution_id": "ins_56",
+        "institution_name": "Chase",
+        "request_id": "05c1582b2c9acd6"
+      },
+      "event_name": "OPEN_OAUTH",
+      "timestamp": "2026-07-01T19:45:16Z"
+    },
+    {
+      "event_id": "42ecb358-291f-44cd-bb25-941e827958e0",
+      "event_metadata": {
+        "institution_id": "ins_56",
+        "institution_name": "Chase",
+        "request_id": "05c1582b2c9acd6",
+        "view_name": "OAUTH"
+      },
+      "event_name": "TRANSITION_VIEW",
+      "timestamp": "2026-07-01T19:45:15Z"
+    },
+    {
+      "event_id": "c36b3597-c4bf-4d72-afbf-80c4442eb595",
+      "event_metadata": {
+        "institution_id": "ins_56",
+        "institution_name": "Chase",
+        "request_id": "882d78cd3ca69ec"
+      },
+      "event_name": "SELECT_INSTITUTION",
+      "timestamp": "2026-07-01T19:45:14Z"
+    },
+    {
+      "event_id": "4e0da106-1e48-4ce1-a26e-af4ac461fd13",
+      "event_metadata": {
+        "request_id": "882d78cd3ca69ec",
+        "view_name": "SELECT_INSTITUTION"
+      },
+      "event_name": "TRANSITION_VIEW",
+      "timestamp": "2026-07-01T19:45:13Z"
+    },
+    {
+      "event_id": "4f4ee6e3-0c2c-4b39-a214-f107cee28b01",
+      "event_metadata": {
+        "request_id": "793557fc0c66d7e"
+      },
+      "event_name": "SKIP_SUBMIT_PHONE",
+      "timestamp": "2026-07-01T19:45:12Z"
+    },
+    {
+      "event_id": "d9fb6809-ca6f-4a11-bf95-c5d872e20789",
+      "event_metadata": {
+        "request_id": "793557fc0c66d7e",
+        "view_name": "CONSENT"
+      },
+      "event_name": "OPEN",
+      "timestamp": "2026-07-01T19:45:09Z"
+    },
+    {
+      "event_id": "19f61340-d62b-49c5-9c4a-2e851b111583",
+      "event_metadata": {
+        "request_id": "793557fc0c66d7e",
+        "view_name": "SUBMIT_PHONE"
+      },
+      "event_name": "TRANSITION_VIEW",
+      "timestamp": "2026-07-01T19:45:09Z"
+    },
+    {
+      "event_id": "b8f6bffb-99ae-42f2-9fbc-0ffa352730e5",
+      "event_metadata": {
+        "request_id": "793557fc0c66d7e",
+        "view_name": "CONSENT"
+      },
+      "event_name": "TRANSITION_VIEW",
+      "timestamp": "2026-07-01T19:45:09Z"
+    }
+  ]
+}

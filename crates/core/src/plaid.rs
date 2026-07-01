@@ -38,6 +38,14 @@ pub enum PlaidError {
         error_code: String,
         error_message: String,
     },
+    /// A non-success HTTP response whose body didn't match Plaid's
+    /// documented `{error_type, error_code, error_message}` shape — the
+    /// raw body is kept rather than discarded, so a gateway error, a
+    /// rate-limit response with no body, or an undocumented error shape
+    /// is still diagnosable instead of collapsing into an opaque parse
+    /// failure.
+    #[error("Plaid returned an unexpected error response (HTTP {status}): {raw_body}")]
+    UnexpectedErrorResponse { status: u16, raw_body: String },
     #[error("failed to parse Plaid response: {0}")]
     Parse(#[from] serde_json::Error),
 }
@@ -80,11 +88,16 @@ struct PlaidApiErrorBody {
 /// that started out uncertain. Silently a no-op if the env var isn't set,
 /// or if anything about writing the file fails (this must never be able
 /// to break a real request just because fixture-capture had a problem).
-fn capture_fixture_if_enabled(endpoint_path: &str, raw_response: &str) {
+fn capture_fixture_if_enabled(endpoint_path: &str, raw_response: &str, is_success: bool) {
     let Ok(dir) = std::env::var("PLAID_CAPTURE_FIXTURES_DIR") else {
         return;
     };
-    let filename = endpoint_path.trim_start_matches('/').replace('/', "_");
+    let base = endpoint_path.trim_start_matches('/').replace('/', "_");
+    let filename = if is_success {
+        base
+    } else {
+        format!("{base}_error")
+    };
     let full_path = format!("{dir}/{filename}.json");
 
     let pretty = serde_json::from_str::<serde_json::Value>(raw_response)
@@ -122,14 +135,19 @@ impl PlaidClient {
         let status = response.status();
         let text = response.text().await?;
 
-        capture_fixture_if_enabled(path, &text);
+        capture_fixture_if_enabled(path, &text, status.is_success());
 
         if !status.is_success() {
-            let error: PlaidApiErrorBody = serde_json::from_str(&text)?;
-            return Err(PlaidError::Api {
-                error_type: error.error_type,
-                error_code: error.error_code,
-                error_message: error.error_message,
+            return Err(match serde_json::from_str::<PlaidApiErrorBody>(&text) {
+                Ok(error) => PlaidError::Api {
+                    error_type: error.error_type,
+                    error_code: error.error_code,
+                    error_message: error.error_message,
+                },
+                Err(_) => PlaidError::UnexpectedErrorResponse {
+                    status: status.as_u16(),
+                    raw_body: text,
+                },
             });
         }
 
@@ -312,6 +330,13 @@ pub struct LinkSession {
     #[serde(default)]
     pub finished_at: Option<String>,
     pub results: LinkSessionResults,
+    /// The full event trail (view transitions, errors encountered along
+    /// the way, handoff). Kept as raw JSON rather than a strict type —
+    /// event shapes vary a lot by event_name, and this is mainly for
+    /// diagnosing what happened in a session, not something the app logic
+    /// needs to depend on structurally.
+    #[serde(default)]
+    pub events: Vec<serde_json::Value>,
 }
 
 impl LinkSession {
@@ -378,8 +403,9 @@ mod tests {
     fn sandbox_client_from_env() -> PlaidClient {
         let client_id = std::env::var("PLAID_CLIENT_ID")
             .expect("PLAID_CLIENT_ID must be set to run Plaid Sandbox tests");
-        let secret = std::env::var("PLAID_SECRET")
-            .expect("PLAID_SECRET must be set to run Plaid Sandbox tests (use your Sandbox secret)");
+        let secret = std::env::var("PLAID_SECRET").expect(
+            "PLAID_SECRET must be set to run Plaid Sandbox tests (use your Sandbox secret)",
+        );
         PlaidClient::new(PlaidConfig {
             client_id,
             secret: Secret::new(secret),

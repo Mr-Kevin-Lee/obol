@@ -1,183 +1,144 @@
 {
-  "created_at": "2026-07-01T19:32:21Z",
-  "expiration": "2026-07-01T20:02:21Z",
+  "created_at": "2026-07-01T19:45:06Z",
+  "expiration": "2026-07-01T20:15:06Z",
   "link_sessions": [
     {
       "events": [
         {
-          "event_id": "93a8b192-0e7d-452e-b05f-b167f68d0587",
+          "event_id": "4ffa1e34-1fe5-4f5b-9c67-42b7ebf99536",
+          "event_metadata": {
+            "exit_status": "requires_oauth",
+            "institution_id": "ins_56",
+            "institution_name": "Chase",
+            "request_id": "01ba1411e1d3824"
+          },
+          "event_name": "EXIT",
+          "timestamp": "2026-07-01T19:45:45Z"
+        },
+        {
+          "event_id": "5fad5f08-f2e0-469c-9115-6741aaf40d53",
           "event_metadata": {
             "institution_id": "ins_56",
             "institution_name": "Chase",
-            "request_id": "569969dca515a7a"
-          },
-          "event_name": "HANDOFF",
-          "timestamp": "2026-07-01T19:33:26Z"
-        },
-        {
-          "event_id": "5b648adb-2db7-4cc3-adde-72a9a61a295b",
-          "event_metadata": {
-            "request_id": "5a8d6ba62fc16ec"
-          },
-          "event_name": "SKIP_SUBMIT_PHONE",
-          "timestamp": "2026-07-01T19:33:25Z"
-        },
-        {
-          "event_id": "84a1b645-4a3d-4c2e-b24f-444745ed33b7",
-          "event_metadata": {
-            "request_id": "5a8d6ba62fc16ec",
-            "view_name": "SUBMIT_PHONE"
+            "request_id": "42ad1a04d163782",
+            "view_name": "EXIT"
           },
           "event_name": "TRANSITION_VIEW",
-          "timestamp": "2026-07-01T19:33:22Z"
+          "timestamp": "2026-07-01T19:45:42Z"
         },
         {
-          "event_id": "5d0edb36-5038-4dfc-8e3d-183799aede54",
-          "event_metadata": {
-            "request_id": "982d12e0dce6a09",
-            "view_name": "CONSENT"
-          },
-          "event_name": "TRANSITION_VIEW",
-          "timestamp": "2026-07-01T19:33:20Z"
-        },
-        {
-          "event_id": "d95af6f5-d0b1-4e1e-a476-5fcf818ef965",
+          "event_id": "a97b24f0-ddbc-490a-8f3b-7886cd3a35fd",
           "event_metadata": {
             "institution_id": "ins_56",
             "institution_name": "Chase",
-            "request_id": "58814707d0e9ccc",
-            "view_name": "SELECT_ACCOUNT"
-          },
-          "event_name": "TRANSITION_VIEW",
-          "timestamp": "2026-07-01T19:33:15Z"
-        },
-        {
-          "event_id": "58b3f0e0-2d38-489c-b5be-c7220c77270b",
-          "event_metadata": {
-            "institution_id": "ins_56",
-            "institution_name": "Chase",
-            "request_id": "329cad964b0b73b"
-          },
-          "event_name": "OPEN_OAUTH",
-          "timestamp": "2026-07-01T19:32:42Z"
-        },
-        {
-          "event_id": "2f7076f8-f08f-4269-b9cd-1c4777337bec",
-          "event_metadata": {
-            "institution_id": "ins_56",
-            "institution_name": "Chase",
-            "request_id": "329cad964b0b73b",
+            "request_id": "09dfac26c33e62b",
             "view_name": "OAUTH"
           },
           "event_name": "TRANSITION_VIEW",
-          "timestamp": "2026-07-01T19:32:41Z"
+          "timestamp": "2026-07-01T19:45:28Z"
         },
         {
-          "event_id": "412f99ea-c069-4e6b-a79a-5ea0b95f402c",
+          "event_id": "969ccbc9-ea5e-497a-8925-8fbe9142e6eb",
           "event_metadata": {
             "institution_id": "ins_56",
             "institution_name": "Chase",
-            "request_id": "51a4cb55b4299bd"
+            "request_id": "05c1582b2c9acd6"
           },
-          "event_name": "SELECT_INSTITUTION",
-          "timestamp": "2026-07-01T19:32:40Z"
+          "event_name": "OPEN_OAUTH",
+          "timestamp": "2026-07-01T19:45:16Z"
         },
         {
-          "event_id": "2075b458-8d72-4bef-841e-b5f08f82824a",
+          "event_id": "42ecb358-291f-44cd-bb25-941e827958e0",
           "event_metadata": {
-            "request_id": "51a4cb55b4299bd",
+            "institution_id": "ins_56",
+            "institution_name": "Chase",
+            "request_id": "05c1582b2c9acd6",
+            "view_name": "OAUTH"
+          },
+          "event_name": "TRANSITION_VIEW",
+          "timestamp": "2026-07-01T19:45:15Z"
+        },
+        {
+          "event_id": "c36b3597-c4bf-4d72-afbf-80c4442eb595",
+          "event_metadata": {
+            "institution_id": "ins_56",
+            "institution_name": "Chase",
+            "request_id": "882d78cd3ca69ec"
+          },
+          "event_name": "SELECT_INSTITUTION",
+          "timestamp": "2026-07-01T19:45:14Z"
+        },
+        {
+          "event_id": "4e0da106-1e48-4ce1-a26e-af4ac461fd13",
+          "event_metadata": {
+            "request_id": "882d78cd3ca69ec",
             "view_name": "SELECT_INSTITUTION"
           },
           "event_name": "TRANSITION_VIEW",
-          "timestamp": "2026-07-01T19:32:39Z"
+          "timestamp": "2026-07-01T19:45:13Z"
         },
         {
-          "event_id": "4e825a83-946b-4476-b34f-36b2695cb93f",
+          "event_id": "4f4ee6e3-0c2c-4b39-a214-f107cee28b01",
           "event_metadata": {
-            "request_id": "053cc07329b5b7a"
+            "request_id": "793557fc0c66d7e"
           },
           "event_name": "SKIP_SUBMIT_PHONE",
-          "timestamp": "2026-07-01T19:32:38Z"
+          "timestamp": "2026-07-01T19:45:12Z"
         },
         {
-          "event_id": "b526653f-bc3d-44f9-9cb8-3ed4e1f451f6",
+          "event_id": "d9fb6809-ca6f-4a11-bf95-c5d872e20789",
           "event_metadata": {
-            "request_id": "053cc07329b5b7a",
+            "request_id": "793557fc0c66d7e",
             "view_name": "CONSENT"
           },
           "event_name": "OPEN",
-          "timestamp": "2026-07-01T19:32:36Z"
+          "timestamp": "2026-07-01T19:45:09Z"
         },
         {
-          "event_id": "fea89f85-86be-4c98-b6b5-912eb4980e03",
+          "event_id": "19f61340-d62b-49c5-9c4a-2e851b111583",
           "event_metadata": {
-            "request_id": "053cc07329b5b7a",
+            "request_id": "793557fc0c66d7e",
             "view_name": "SUBMIT_PHONE"
           },
           "event_name": "TRANSITION_VIEW",
-          "timestamp": "2026-07-01T19:32:36Z"
+          "timestamp": "2026-07-01T19:45:09Z"
         },
         {
-          "event_id": "ed86161b-e716-4b9d-af66-fe9069e13be1",
+          "event_id": "b8f6bffb-99ae-42f2-9fbc-0ffa352730e5",
           "event_metadata": {
-            "request_id": "053cc07329b5b7a",
+            "request_id": "793557fc0c66d7e",
             "view_name": "CONSENT"
           },
           "event_name": "TRANSITION_VIEW",
-          "timestamp": "2026-07-01T19:32:36Z"
+          "timestamp": "2026-07-01T19:45:09Z"
         }
       ],
-      "finished_at": "2026-07-01T19:33:25.676890309Z",
-      "link_session_id": "019f1f2b-4056-71a9-9d4a-97b4d619e45b",
+      "exit": {
+        "error": null,
+        "metadata": {
+          "institution": {
+            "institution_id": "ins_56",
+            "name": "Chase"
+          },
+          "link_session_id": "019f1f36-be8c-7015-a5fa-a5e149b97c83",
+          "request_id": "01ba1411e1d3824",
+          "status": "requires_oauth"
+        }
+      },
+      "finished_at": "2026-07-01T19:45:45.609769074Z",
+      "link_session_id": "019f1f36-be8c-7015-a5fa-a5e149b97c83",
       "results": {
         "bank_income_results": [],
         "cra_item_add_results": [],
         "cra_update_results": [],
         "document_income_results": null,
-        "item_add_results": [
-          {
-            "accounts": [
-              {
-                "class_type": null,
-                "id": "vyR9kMkbwVigNr7Z1dEWT4yELQA8PJtqj89PV",
-                "mask": "0000",
-                "name": "Plaid Checking",
-                "subtype": "checking",
-                "type": "depository",
-                "verification_status": null
-              },
-              {
-                "class_type": null,
-                "id": "R61X9Q9JagI73erEK1QXUk8drlaGPMUaKnmL1",
-                "mask": "1111",
-                "name": "Plaid Saving",
-                "subtype": "savings",
-                "type": "depository",
-                "verification_status": null
-              },
-              {
-                "class_type": null,
-                "id": "65BN7e7J3WHpLR8vboBgtzon45MQK3i8WdVqM",
-                "mask": "9002",
-                "name": "Plaid Cash Management",
-                "subtype": "cash management",
-                "type": "depository",
-                "verification_status": null
-              }
-            ],
-            "institution": {
-              "institution_id": "ins_56",
-              "name": "Chase"
-            },
-            "public_token": "public-sandbox-ea1e231f-e091-485a-b2a9-b2fa9e57774d"
-          }
-        ],
+        "item_add_results": [],
         "payroll_income_results": []
       },
-      "started_at": "2026-07-01T19:32:36.054243643Z"
+      "started_at": "2026-07-01T19:45:09.260140846Z"
     }
   ],
-  "link_token": "link-sandbox-a23680ff-1c91-4013-954c-de99ba98dad9",
+  "link_token": "link-sandbox-df18bb1c-af74-45ae-b170-6f54bd4070ef",
   "metadata": {
     "client_name": "Obol",
     "country_codes": [
@@ -190,5 +151,5 @@
     "redirect_uri": null,
     "webhook": null
   },
-  "request_id": "da3642033e9c0e0"
+  "request_id": "89f8e4b2d2cacd8"
 }

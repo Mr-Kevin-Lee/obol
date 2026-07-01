@@ -1,7 +1,7 @@
 {
   "accounts": [
     {
-      "account_id": "vyR9kMkbwVigNr7Z1dEWT4yELQA8PJtqj89PV",
+      "account_id": "3E38Bkkr7RFNzejAog1MHnn64WL44ofZyaGn6",
       "balances": {
         "available": 100,
         "current": 110,
@@ -15,38 +15,6 @@
       "official_name": "Plaid Gold Standard 0% Interest Checking",
       "persistent_account_id": "8cfb8beb89b774ee43b090625f0d61d0814322b43bff984eaf60386e",
       "subtype": "checking",
-      "type": "depository"
-    },
-    {
-      "account_id": "R61X9Q9JagI73erEK1QXUk8drlaGPMUaKnmL1",
-      "balances": {
-        "available": 200,
-        "current": 210,
-        "iso_currency_code": "USD",
-        "limit": null,
-        "unofficial_currency_code": null
-      },
-      "holder_category": "personal",
-      "mask": "1111",
-      "name": "Plaid Saving",
-      "official_name": "Plaid Silver Standard 0.1% Interest Saving",
-      "persistent_account_id": "211a4e5d8361a3afb7a3886362198c7306e00a313b5aa944c20d34b6",
-      "subtype": "savings",
-      "type": "depository"
-    },
-    {
-      "account_id": "65BN7e7J3WHpLR8vboBgtzon45MQK3i8WdVqM",
-      "balances": {
-        "available": 12060,
-        "current": 12060,
-        "iso_currency_code": "USD",
-        "limit": null,
-        "unofficial_currency_code": null
-      },
-      "mask": "9002",
-      "name": "Plaid Cash Management",
-      "official_name": "Plaid Growth Cash Management",
-      "subtype": "cash management",
       "type": "depository"
     }
   ],
@@ -68,12 +36,12 @@
     "error": null,
     "institution_id": "ins_56",
     "institution_name": "Chase",
-    "item_id": "gdJZ3P3wGVHRvdwgn5EoUZM5QAz1beCldj5XE",
+    "item_id": "G4Wr3KKglMhKGqV4rmMBUy9L4KlVMgUWZ7onE",
     "products": [
       "auth"
     ],
     "update_type": "background",
     "webhook": ""
   },
-  "request_id": "6bef1d98b39c6f4"
+  "request_id": "349527f3886e773"
 }
