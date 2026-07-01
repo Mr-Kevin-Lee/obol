@@ -9,30 +9,34 @@ use std::collections::HashMap;
 
 use async_trait::async_trait;
 use secrecy::Secret;
+use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 use crate::{Account, Category};
 
-/// A config-driven declaration of one real-world account group (e.g.
-/// "Chase checking + credit card"), as it will eventually be loaded from
-/// `sources.yaml` (task 11 owns the actual YAML CRUD; this is the shared
-/// shape both that task and this trait need).
-#[derive(Debug, Clone)]
+/// A config-driven declaration of one real-world account (D23 — one
+/// Plaid Item can have several accounts, so this is per-account, not
+/// per-login), as loaded from `sources.yaml` (task 11 owns the CRUD;
+/// this is the shared shape both that task and this trait need).
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SourceConfig {
     pub id: String,
     /// The key this source is registered under in the provider registry
     /// (e.g. `"plaid"`, `"webdriver"`, `"manual_entry"`).
     pub provider: String,
     pub category: Category,
+    #[serde(rename = "type")]
     pub account_type: String,
     pub institution: String,
     /// Salted-hash input for this source's account_key (D15) — generated
-    /// once at add-time, not used by `Provider::fetch` itself, but part
-    /// of the source's persisted shape.
+    /// once at add-time by `sources::add_source`, not used by
+    /// `Provider::fetch` itself, but part of the source's persisted
+    /// shape.
     pub account_salt: String,
     /// Provider-declared config, shape unknown to everything except the
     /// provider that reads it (spec §10.1 — each `Provider` declares its
     /// own config schema).
+    #[serde(default)]
     pub provider_config: serde_json::Value,
 }
 

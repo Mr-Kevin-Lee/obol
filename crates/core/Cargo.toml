@@ -14,6 +14,9 @@ secrecy = "0.8"
 async-trait = "0.1"
 security-framework = "3"
 tokio-retry = "0.3"
+serde-saphyr = "0.0"
+rand = "0.10"
+base64 = "0.22"
 
 [dev-dependencies]
 wiremock = "0.6"
