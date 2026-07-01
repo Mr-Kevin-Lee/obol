@@ -6,6 +6,7 @@ mod pii;
 mod plaid;
 mod plaid_provider;
 mod provider;
+mod retry;
 mod snapshot;
 
 pub use account::{Account, AccountStatus, Asset, Liability};
@@ -26,4 +27,5 @@ pub use plaid_provider::PlaidProvider;
 pub use provider::{
     provider_registry, Credentials, Provider, ProviderError, ProviderFactory, SourceConfig,
 };
+pub use retry::{with_retry, RetryConfig, RetryableError};
 pub use snapshot::{AccountRecord, Category, Snapshot, Status};

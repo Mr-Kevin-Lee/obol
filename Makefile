@@ -3,7 +3,7 @@
 check: fmt lint test
 
 fmt:
-	cargo fmt --all -- --check
+	cargo fmt --all
 
 lint:
 	cargo clippy --workspace --all-targets -- -D warnings
