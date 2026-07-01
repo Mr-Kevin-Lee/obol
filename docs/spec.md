@@ -12,6 +12,8 @@ implementation. Don't build the HTTP interface (§6.1, §14, D7) until v0.1/v0.2
 are complete and its security design has actually been done — see D7's
 explicit deferral.
 
+**v0.1 broken into commit-sized tasks:** see [tasks.md](tasks.md).
+
 ---
 
 # Part 1 — Functional Requirements
@@ -611,6 +613,7 @@ sources:
     category: asset
     type: checking
     institution: chase
+    account_salt: "b64:9fQxK2..."  # generated once at add-time, §11.1
     provider_config:
       plaid_institution_id: ins_56
 
@@ -619,6 +622,7 @@ sources:
     category: asset
     type: brokerage
     institution: vanguard
+    account_salt: "b64:71pLm8..."
     provider_config:
       plaid_institution_id: ins_12
 
@@ -627,12 +631,14 @@ sources:
     category: liability
     type: credit_card
     institution: goldman_sachs
+    account_salt: "b64:3dRzT0..."
 
   - id: student_loan_navient
     provider: webdriver
     category: liability
     type: student_loan
     institution: navient
+    account_salt: "b64:eV9wCq..."
     provider_config:
       login_url: "https://navient.com/login"
 ```
@@ -697,8 +703,9 @@ provider later (e.g. SimpleFIN) means writing its config model, and the UI
 gains a working form for it with no UI code changes.
 
 **Add flow, generic case** (manual entry, browser automation): fill in id,
-display name, category, type, institution, provider-specific fields → write
-new entry to `sources.yaml` (atomic write — temp file + rename, so a crash
+display name, category, type, institution, provider-specific fields →
+generate a random `account_salt` for this source (§11.1, D15) → write new
+entry to `sources.yaml` (atomic write — temp file + rename, so a crash
 mid-write can't corrupt the config).
 
 **Add flow, Plaid case** — needs an interactive auth step, not just form
@@ -711,8 +718,21 @@ fields, since Plaid Link is a hosted authentication flow:
    session) until the session completes.
 4. On success, exchanges the `public_token` for an `access_token`, stores it
    in Keychain, **increments `plaid_items_created_lifetime` (§7.1)**, and
-   writes the new source entry — no separate webhook server needed for a
+   writes the new source entry, including a freshly generated
+   `account_salt` (§11.1) — no separate webhook server needed for a
    single-user local tool.
+
+**Why up to 6 hours (decision D18, §16):** that's Plaid's own guarantee
+window for how long a completed Link session's result stays retrievable
+via `/link/token/get` — not a typical completion time. Most sessions
+complete in minutes, but the Hosted Link flow is explicitly built for
+"scan the QR code on your phone," so a user could plausibly start it, get
+distracted, and finish it later. Polling therefore runs as a **background
+async task** (`tokio::spawn`, polling on an interval, not a blocking loop)
+so the TUI stays responsive and the user can navigate away from the
+Sources screen while a Link session is pending, rather than the whole
+interface freezing until it completes or times out. The pending session is
+cancelable from the Sources screen.
 
 **Edit flow:** re-opens the same generated form pre-filled with current
 values. For Plaid sources specifically, "Reconnect" re-runs Link in **update
@@ -775,6 +795,13 @@ schema (§11.2), which stays a flat `category` field per record; the storage
 layer converts trait objects to/from that flat shape at the serialization
 boundary.
 
+**Balance representation (decision D16, §16):** kept as `f64` throughout —
+the trait, the schema, and the summation in §12 — rather than a
+decimal/cents-based type. This is a glance-at-it net worth dashboard, not
+an accounting/reconciliation tool, so sub-cent float drift across a
+handful of account balances is an accepted, deliberate tradeoff, not
+deferred technical debt.
+
 ### 11.1 PII scrubbing rules
 
 Snapshots store **no**: account numbers, account holder name, institution
@@ -784,12 +811,28 @@ institution name, a locally-generated, **salted** pseudonymous account key
 storing — or being reversible to — the real account number), category,
 type, balance, currency, and timestamp.
 
+**Salt storage (decision D15, §16):** the salt is generated once, per
+source, at the moment that source is added (§10.1's add flow), and stored
+alongside that source's entry in `sources.yaml` (`account_salt` field) —
+not regenerated per run (which would break run-over-run tracking) and not
+a single install-wide salt (which would let two leaked snapshots from
+different installs be correlated). `sources.yaml` already carries the same
+`0600` protection as snapshot files (§4), so this doesn't introduce a new
+class of sensitive file — it's a config-adjacent value living where the
+rest of that source's non-secret configuration already lives, a pragmatic
+"for now" choice rather than a permanent one.
+
 Storage hardening (see §4 for full rationale):
 - Snapshot and config files written with `0600` permissions, containing
   directory `0700`.
 - Default storage path is outside any cloud-synced folder (e.g.
   `~/Library/Application Support/FinancialDashboard/`), not `~/Documents`,
   `~/Desktop`, iCloud Drive, or Dropbox.
+- **Storage path is fixed (not configurable) in v1** (decision D17, §16) —
+  deferred rather than designed now, since an override mechanism
+  immediately reopens the exact question this bullet exists to close
+  (validating the override doesn't land in a cloud-synced folder).
+  Configurability is a named v0.4 stretch item (§15).
 
 ### 11.2 Snapshot JSON schema
 
@@ -881,6 +924,9 @@ screen for managing connections (§10.1).
   color vision.
 - Stretch — trends: requires ≥2 historical snapshots; simple line chart of net
   worth and per-category balances over time once that data exists.
+- **No in-TUI refresh in v0.1** — getting new data means quitting and
+  rerunning `obol` (§6.2), which fetches, saves, and renders in one shot.
+  An in-TUI refresh keybinding is deferred to v0.4 (§15).
 
 **Sources screen:**
 - List of configured sources with provider, category, type, and connection
@@ -957,7 +1003,9 @@ is verified separately, not forced into that same red-green loop (§5).
   against a moving target while v0.1/v0.2 are still in flight.
 - **v0.4 (stretch):** asset-type pie chart, spending/savings trend lines,
   student loan + mortgage connectors once servicers are chosen, scheduled
-  biweekly runs (`launchd` job calling the CLI, no GUI required).
+  biweekly runs (`launchd` job calling the CLI, no GUI required), an
+  in-TUI manual refresh command (re-fetch without quitting and rerunning
+  `obol`, §13), and a configurable storage location (§4, D17).
 
 ## 16. Decisions log
 
@@ -1070,3 +1118,28 @@ Previously open questions, now resolved:
   downgrade or a snapshot from a newer version doesn't hard-fail. Same
   "old snapshots must still render" spirit as FR14, extended in the other
   direction.
+- **D15 — The account-key salt lives in `sources.yaml`, per source**
+  (§11.1): generated once at add-time, not regenerated per run (would
+  break run-over-run tracking) and not a single install-wide value (would
+  let leaked snapshots from different installs be correlated). Rides on
+  the same `0600` protection the file already has — a pragmatic choice for
+  now, not necessarily permanent.
+- **D16 — Balances stay `f64`** (§11, §12, §14): `rust_decimal`/cents-based
+  integers were considered and rejected for v1 — this is a dashboard for a
+  glance-at-it figure, not an accounting tool, so sub-cent float drift is
+  an accepted tradeoff.
+- **D17 — Storage path is fixed, not configurable, in v1** (§4): an
+  override mechanism reopens the cloud-sync-folder validation question §4
+  exists to close, so it's deferred rather than designed now. Named as a
+  v0.4 stretch item (§15) rather than left as an unscoped "someday."
+- **D18 — Plaid Link polling is a non-blocking background task, not a
+  blocking loop** (§10.1): the 6-hour result-retrieval window is Plaid's
+  own guarantee, not an expected completion time — the Hosted Link/QR-code
+  flow means a user could genuinely take a while, so the TUI can't freeze
+  while waiting. The pending session is cancelable from the Sources
+  screen.
+- **D19 — No in-TUI manual refresh in v0.1** (§13): getting new data means
+  quitting and rerunning `obol`, which is an acceptable workflow for a
+  single-user, on-demand v0.1 tool and avoids overlapping a fresh fetch
+  with a screen that's mid-render. Named as a v0.4 stretch item (§15)
+  rather than left unscoped.
