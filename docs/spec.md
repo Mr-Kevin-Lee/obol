@@ -438,7 +438,12 @@ product) were dropped from the client entirely.
 
 - **The 10-Item cap is lifetime, not concurrent.** Removing an Item via
   `/item/remove` does not free a slot. Relinking the same institution
-  repeatedly while debugging burns Items permanently. **All development and
+  repeatedly while debugging burns Items permanently. **Confirmed directly
+  against Plaid's own docs** (glossary, checked during task 9): "Calling
+  `/item/remove` on the Trial plan does not free up slots against your
+  10-Item cap. If you've reached the limit, you'll need to upgrade to a
+  paid Production plan to connect more." — not just an assumption carried
+  over from earlier drafting. **All development and
   integration testing should happen against Plaid's Sandbox environment**
   (fake institutions, unlimited free relinking); only link real institutions
   in Production once the connector code is stable, to conserve the budget.
@@ -590,7 +595,9 @@ implicit gaps (decision D13, §16):
   (§7.1). A single lock file (`.lock` in the app's storage directory, §4)
   is held for the duration of the write-critical sections — config writes,
   snapshot writes, Item counter increments — using an OS-level advisory
-  lock (`flock`, via the `fs2` or `fslock` crate; a plain
+  lock (`flock`, via the `fd-lock` crate — checked during task 12 that
+  `fs2`/`fslock` are both unmaintained since 2018/2021 respectively;
+  `fd-lock` is actively maintained, last published 2025; a plain
   `std::sync::Mutex` doesn't help here since these are separate
   processes, not threads). A run that can't acquire the lock within a
   short timeout exits with a clear "another instance appears to be
@@ -991,7 +998,7 @@ screen for managing connections (§10.1).
 | Dependency management | `Cargo.lock` (committed) | Rust's default toolchain is already lockfile-first, directly reinforcing the supply-chain principle in §4 |
 | Logging | `tracing` + `tracing-subscriber` | Backs the audit log requirement (§4) — structured, filterable, and the natural place to enforce "never log a credential or full account number" as a consistent policy rather than an ad-hoc discipline |
 | Error handling | `thiserror` in the core library (typed `ProviderError`, `SnapshotError`, etc. — see the `Provider` trait in §10); `anyhow` in the CLI/TUI binary for top-level error reporting | Conventional Rust split: typed, matchable errors in the library; ergonomic error context at the application boundary |
-| Concurrency / file locking | `fs2` (or `fslock`) — OS-level advisory lock (`flock`) on a `.lock` file in the storage directory | Serializes concurrent invocations (D13, §9.1) so a scheduled `launchd` run and an interactive session don't race on `sources.yaml`, snapshot writes, or the Plaid Item counter — `std::sync::Mutex` doesn't apply across separate processes |
+| Concurrency / file locking | `fd-lock` — OS-level advisory lock (`flock`) on a `.lock` file in the storage directory | Serializes concurrent invocations (D13, §9.1) so a scheduled `launchd` run and an interactive session don't race on `sources.yaml`, snapshot writes, or the Plaid Item counter — `std::sync::Mutex` doesn't apply across separate processes. Chosen over the originally-named `fs2`/`fslock` after checking during task 12 that both are unmaintained (2018/2021); `fd-lock` is actively maintained |
 
 Given your recent hands-on work with Tokio and async Rust, this stack likely
 requires less ramp-up than the Python plan would have, on top of closing the

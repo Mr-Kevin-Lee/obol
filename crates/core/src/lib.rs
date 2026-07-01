@@ -1,6 +1,7 @@
 mod account;
 mod item_usage;
 mod keychain;
+mod lock;
 mod migration;
 mod networth;
 mod pii;
@@ -17,6 +18,7 @@ pub use keychain::{
     delete_plaid_access_token, read_plaid_access_token, read_plaid_app_credentials,
     store_plaid_access_token, store_plaid_app_credentials, KeychainError,
 };
+pub use lock::{acquire_with_timeout, FileLock, LockError};
 pub use migration::{load_snapshot_json, LoadedSnapshot, MigrationError, CURRENT_SCHEMA_VERSION};
 pub use networth::{calculate_net_worth, NetWorth};
 pub use pii::{scrub, RawAccountData};
