@@ -153,6 +153,20 @@ is enabled on this machine as a baseline.
   risk, not an absolute guarantee.
 - No plaintext logging of credentials, full account numbers, or raw
   provider-API responses, at any log level, ever.
+- **This app's own Plaid `client_id`/`secret` (decision D20, §16)** — not
+  the per-Item access token, which is already covered above, but the
+  credential pair this app itself uses to authenticate to Plaid's API —
+  is stored in Keychain, the same as the access token, prompted for once
+  during setup. Environment variables are a dev/testing convenience only
+  (used by this crate's own `#[ignore]`d Sandbox integration tests, per
+  Plaid's own guidance to keep API keys out of source and out of
+  hardcoded strings), never how the shipped app holds this credential at
+  rest.
+- **Key rotation:** if `client_id`/`secret` (or any other credential) is
+  ever exposed — committed by accident, logged, shared in a bug report —
+  rotate it immediately via the Plaid dashboard rather than treating
+  exposure as low-severity because it's "only" an API credential and not
+  a bank password.
 
 **Data minimization & storage:**
 - PII scrubbing (§11.1) is the first line of defense — snapshots contain no
@@ -190,6 +204,12 @@ is enabled on this machine as a baseline.
 - No telemetry, analytics, or crash reporting phones home by default. If
   ever added, it must be explicitly opt-in, clearly disclosed, and must
   never include balances or account identifiers.
+- **Dependency vulnerability scanning (decision D21, §16):** `Cargo.lock`
+  pinning (above) guards against a compromised *update* slipping in
+  silently — it doesn't catch a **known** CVE in a dependency already
+  pinned. Run `cargo audit` periodically (`make audit`) and deliberately
+  bump the lockfile when a security advisory affects something in the
+  dependency tree, rather than treating "pinned" as "never touch again."
 
 **Auditability:**
 - Each run logs a minimal local history (timestamp, which sources
@@ -385,10 +405,16 @@ otherwise.**
 | Student loans (stretch) | TBD | Browser automation | Servicer TBD; revisit once selected |
 | Mortgage (stretch) | TBD | Browser automation | Servicer TBD |
 
-**Why Plaid first:** as of April 2026, Plaid offers a free Trial plan for new
-US/Canada teams supporting up to 10 live Production accounts with real data —
-comfortably covers your 5 non-Apple-Card institutions. No cost, no per-call
-billing, until you exceed 10 linked accounts.
+**Why Plaid first:** confirmed directly during signup (as of this writing)
+that Plaid's current Production onboarding is a Pay-as-you-go plan — no
+monthly minimum, no upfront commitment, but real per-call/per-account
+pricing, not the free Trial originally assumed here. That's corrected now
+rather than left stale. The practical cost is still low for this project:
+decision D22 (§16) confirmed via real Sandbox testing that the Balance
+product alone — call-based, no recurring per-account fee — returns usable
+current-balance data for every account type this project needs, so
+Investments and Liabilities (each billed per-account/month) aren't needed
+at all. Estimated cost at ~4 Items run biweekly: well under $1/month.
 
 **What "Item" actually means:** a Plaid Item is one login at one institution,
 not one account. If Vanguard exposes brokerage + 529 + money market under a
@@ -402,10 +428,11 @@ single sign-in, that's one Item. Estimated Item usage for this project:
 | Morgan Stanley/E-Trade | Stocks/RSUs | 1 |
 | **Total** | | **~4 of 10**, leaving room for stretch goals |
 
-Balance, Investments, and Liabilities — the specific products this project
-needs — are all included free under the Trial plan (Investments and
-Liabilities are normally subscription-billed per Item; that's waived on
-Trial).
+**Balance is the only Plaid product this project needs (decision D22, §16)**
+— confirmed via real Sandbox testing that it returns usable current-balance
+data for checking, brokerage, retirement, and credit accounts alike, so
+Investments and Liabilities (each a separate, per-account/month-billed
+product) were dropped from the client entirely.
 
 **Two implementation gotchas to design around:**
 
@@ -943,7 +970,7 @@ screen for managing connections (§10.1).
 |---|---|---|
 | Core (shared) | Plain Rust + `serde`/`serde_json` | No UI dependency in the core library — both interfaces call the same functions; `serde` handles schema + versioned migrations |
 | Async runtime | `tokio` | Already your working environment from recent projects |
-| Plaid integration | Hand-rolled `reqwest` + `serde` client against Plaid's documented REST endpoints (Balance, Investments, Liabilities, Link) | No official Rust SDK exists (community crates like `rplaid` and OpenAPI-generated clients exist but are unaudited third-party surfaces); a narrow, self-written client covering only the endpoints actually needed keeps the audited surface small — consistent with §4's minimal-dependency principle |
+| Plaid integration | Hand-rolled `reqwest` + `serde` client against Plaid's documented REST endpoints — Balance and Link only (D22, §16); Investments/Liabilities were built, Sandbox-tested, and deliberately dropped once Balance was confirmed sufficient | No official Rust SDK exists (community crates like `rplaid` and OpenAPI-generated clients exist but are unaudited third-party surfaces); a narrow, self-written client covering only the endpoints actually needed keeps the audited surface small — consistent with §4's minimal-dependency principle |
 | Browser automation | `fantoccini` (WebDriver protocol, via chromedriver/geckodriver) | No Rust Playwright bindings exist. **Needs a spike**: WebDriver automation has historically struggled more than Playwright's CDP approach against heavy anti-bot/JS bank login flows — validate against a real target before committing (§7) |
 | TLS | `rustls` (via `reqwest`'s `rustls-tls` feature) | Memory-safe TLS stack, avoids linking OpenSSL and its associated CVE history |
 | Secrets | `secrecy` + `zeroize` | `secrecy` prevents accidental exposure via `Debug`/logging; `zeroize` gives deterministic, compiler-enforced wiping on drop (§4) |
@@ -1056,6 +1083,10 @@ Previously open questions, now resolved:
   real and necessary, but **deliberately not designed yet** — that work
   starts when v0.3 actually begins, once the CLI/TUI (v0.1) is built and
   the core library is stable, rather than being speculatively designed now.
+  Rate-limiting/lockout protection against repeated unauthorized-access
+  attempts (a general best practice for anything with a login/session
+  surface) belongs in that same v0.3 design pass — v0.1's CLI/TUI has no
+  login surface at all, so it doesn't apply yet.
 - **D8 — Plaid Item usage is tracked locally and surfaced in both
   interfaces** (FR21, §7.1). Plaid has no API to query remaining Item
   quota, so a lifetime counter is maintained by the app itself —
@@ -1143,3 +1174,32 @@ Previously open questions, now resolved:
   single-user, on-demand v0.1 tool and avoids overlapping a fresh fetch
   with a screen that's mid-render. Named as a v0.4 stretch item (§15)
   rather than left unscoped.
+- **D20 — This app's own Plaid `client_id`/`secret` live in Keychain**
+  (§4), the same treatment as the per-Item access token (§8) — not an
+  env var or config file for the shipped app. Driven by Plaid's own
+  published security guidance ("store API keys in environment variables
+  or a secrets manager," "don't hardcode secrets") and consistency with
+  the access-token precedent already established. Env vars remain fine
+  for local dev/testing only (this crate's `#[ignore]`d Sandbox
+  integration tests read `PLAID_SANDBOX_CLIENT_ID`/`PLAID_SANDBOX_SECRET`
+  this way) — never how the running app holds this credential.
+- **D21 — Periodic dependency vulnerability scanning via `cargo audit`**
+  (§4, `make audit`): `Cargo.lock` pinning protects against a compromised
+  *update* landing silently, but doesn't catch a known CVE in a
+  dependency that was already pinned before the CVE was disclosed. This
+  is a deliberate, separate practice from pinning, not redundant with it.
+- **D22 — Plaid integration uses the Balance product only** (§7, §14):
+  built and Sandbox-tested Investments Holdings and Liabilities clients
+  first (per the original plan), then tested whether the plain Balance
+  endpoint alone returns usable current-balance data for investment- and
+  liability-type Sandbox accounts too, without those products enabled.
+  It does. Since this project only ever needs current balance — never
+  security-level holdings detail or liability specifics like APR/due
+  dates — Investments and Liabilities were dropped entirely: one Plaid
+  product instead of three, no recurring per-account billing (Balance is
+  pure per-call), and no uncertain raw-JSON response types left
+  unresolved in the client. Also corrected §7's stale "free Trial plan"
+  claim in the same pass — real Plaid signup (as of this writing) is a
+  Pay-as-you-go plan with per-call/per-account pricing, not a free trial;
+  the Balance-only design keeps actual cost low (well under $1/month at
+  this project's scale) regardless.
