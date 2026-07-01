@@ -72,6 +72,33 @@ struct PlaidApiErrorBody {
     error_message: String,
 }
 
+/// If `PLAID_CAPTURE_FIXTURES_DIR` is set, writes every real API response
+/// this client receives to `<dir>/<endpoint>.json`, pretty-printed. This
+/// is how real Plaid response shapes get turned into committed fixtures
+/// (e.g. `crates/core/tests/fixtures/plaid/`) — a real observed response
+/// is worth far more than a guessed-at one for the parts of this client
+/// that started out uncertain. Silently a no-op if the env var isn't set,
+/// or if anything about writing the file fails (this must never be able
+/// to break a real request just because fixture-capture had a problem).
+fn capture_fixture_if_enabled(endpoint_path: &str, raw_response: &str) {
+    let Ok(dir) = std::env::var("PLAID_CAPTURE_FIXTURES_DIR") else {
+        return;
+    };
+    let filename = endpoint_path.trim_start_matches('/').replace('/', "_");
+    let full_path = format!("{dir}/{filename}.json");
+
+    let pretty = serde_json::from_str::<serde_json::Value>(raw_response)
+        .and_then(|v| serde_json::to_string_pretty(&v))
+        .unwrap_or_else(|_| raw_response.to_string());
+
+    if let Some(parent) = std::path::Path::new(&full_path).parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    if std::fs::write(&full_path, pretty).is_ok() {
+        eprintln!("[fixture captured] {full_path}");
+    }
+}
+
 impl PlaidClient {
     pub fn new(config: PlaidConfig) -> Self {
         Self {
@@ -94,6 +121,8 @@ impl PlaidClient {
         let response = self.http.post(&url).json(&wrapped).send().await?;
         let status = response.status();
         let text = response.text().await?;
+
+        capture_fixture_if_enabled(path, &text);
 
         if !status.is_success() {
             let error: PlaidApiErrorBody = serde_json::from_str(&text)?;
@@ -140,6 +169,61 @@ impl PlaidClient {
         }
         self.post("/item/public_token/exchange", Req { public_token })
             .await
+    }
+
+    /// Creates a Link token configured for Hosted Link (spec §10.1). The
+    /// exact request shape here is fairly stable/well-documented Plaid
+    /// API surface; `hosted_link_url` on the response is the part worth
+    /// double-checking against a real response — see the module doc
+    /// comment's confidence note.
+    pub async fn create_link_token(
+        &self,
+        client_user_id: &str,
+        client_name: &str,
+    ) -> Result<CreateLinkTokenResponse, PlaidError> {
+        #[derive(Serialize)]
+        struct LinkUser<'a> {
+            client_user_id: &'a str,
+        }
+        #[derive(Serialize)]
+        struct Req<'a> {
+            user: LinkUser<'a>,
+            client_name: &'a str,
+            products: &'a [&'a str],
+            country_codes: &'a [&'a str],
+            language: &'a str,
+            hosted_link: serde_json::Value,
+        }
+        self.post(
+            "/link/token/create",
+            Req {
+                user: LinkUser { client_user_id },
+                client_name,
+                products: &["auth"],
+                country_codes: &["US"],
+                language: "en",
+                hosted_link: serde_json::json!({}),
+            },
+        )
+        .await
+    }
+
+    /// Polls the status of a pending Link session (decision D18 — meant
+    /// to be called periodically from a background task, never in a
+    /// blocking loop, once this is wired into the real app). Response
+    /// shape confirmed against a real completed Sandbox session via
+    /// `examples/plaid_link_spike.rs`: a session is complete once
+    /// `finished_at` is non-null, and the `public_token` lives at
+    /// `results.item_add_results[0].public_token`.
+    pub async fn get_link_token_status(
+        &self,
+        link_token: &str,
+    ) -> Result<LinkTokenStatusResponse, PlaidError> {
+        #[derive(Serialize)]
+        struct Req<'a> {
+            link_token: &'a str,
+        }
+        self.post("/link/token/get", Req { link_token }).await
     }
 
     pub async fn get_balances(&self, access_token: &str) -> Result<BalanceResponse, PlaidError> {
@@ -205,6 +289,76 @@ pub struct PlaidItem {
 }
 
 #[derive(Debug, Deserialize)]
+pub struct CreateLinkTokenResponse {
+    pub link_token: String,
+    pub expiration: String,
+    pub request_id: String,
+    #[serde(default)]
+    pub hosted_link_url: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct LinkTokenStatusResponse {
+    pub link_token: String,
+    #[serde(default)]
+    pub link_sessions: Vec<LinkSession>,
+    pub request_id: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct LinkSession {
+    pub link_session_id: String,
+    pub started_at: String,
+    #[serde(default)]
+    pub finished_at: Option<String>,
+    pub results: LinkSessionResults,
+}
+
+impl LinkSession {
+    pub fn is_finished(&self) -> bool {
+        self.finished_at.is_some()
+    }
+
+    /// The `public_token` for the first successfully linked Item, if the
+    /// session finished with a successful item add.
+    pub fn public_token(&self) -> Option<&str> {
+        self.results
+            .item_add_results
+            .first()
+            .map(|r| r.public_token.as_str())
+    }
+}
+
+#[derive(Debug, Deserialize)]
+pub struct LinkSessionResults {
+    #[serde(default)]
+    pub item_add_results: Vec<ItemAddResult>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ItemAddResult {
+    pub public_token: String,
+    pub institution: LinkInstitution,
+    pub accounts: Vec<LinkAccount>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct LinkInstitution {
+    pub institution_id: String,
+    pub name: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct LinkAccount {
+    pub id: String,
+    pub name: String,
+    pub mask: Option<String>,
+    pub subtype: Option<String>,
+    #[serde(rename = "type")]
+    pub account_type: String,
+}
+
+#[derive(Debug, Deserialize)]
 pub struct BalanceResponse {
     pub accounts: Vec<PlaidAccount>,
     pub item: PlaidItem,
@@ -217,13 +371,15 @@ mod tests {
 
     /// Reads Sandbox credentials from the environment. Only called by
     /// `#[ignore]`d tests, which you run explicitly once you have keys:
-    ///   PLAID_SANDBOX_CLIENT_ID=... PLAID_SANDBOX_SECRET=... \
+    ///   PLAID_CLIENT_ID=... PLAID_SECRET=... \
     ///     cargo test -p obol-core -- --ignored
+    /// Same variable names as `examples/plaid_link_spike.rs` — use your
+    /// Sandbox secret here, since these tests are Sandbox-only by design.
     fn sandbox_client_from_env() -> PlaidClient {
-        let client_id = std::env::var("PLAID_SANDBOX_CLIENT_ID")
-            .expect("PLAID_SANDBOX_CLIENT_ID must be set to run Plaid Sandbox tests");
-        let secret = std::env::var("PLAID_SANDBOX_SECRET")
-            .expect("PLAID_SANDBOX_SECRET must be set to run Plaid Sandbox tests");
+        let client_id = std::env::var("PLAID_CLIENT_ID")
+            .expect("PLAID_CLIENT_ID must be set to run Plaid Sandbox tests");
+        let secret = std::env::var("PLAID_SECRET")
+            .expect("PLAID_SECRET must be set to run Plaid Sandbox tests (use your Sandbox secret)");
         PlaidClient::new(PlaidConfig {
             client_id,
             secret: Secret::new(secret),

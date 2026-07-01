@@ -10,7 +10,9 @@ pub use migration::{load_snapshot_json, LoadedSnapshot, MigrationError, CURRENT_
 pub use networth::{calculate_net_worth, NetWorth};
 pub use pii::{scrub, RawAccountData};
 pub use plaid::{
-    BalanceResponse, ExchangeResponse, PlaidAccount, PlaidBalances, PlaidClient, PlaidConfig,
-    PlaidEnvironment, PlaidError, PlaidItem, RemoveItemResponse, SandboxPublicTokenResponse,
+    BalanceResponse, CreateLinkTokenResponse, ExchangeResponse, ItemAddResult, LinkAccount,
+    LinkInstitution, LinkSession, LinkSessionResults, LinkTokenStatusResponse, PlaidAccount,
+    PlaidBalances, PlaidClient, PlaidConfig, PlaidEnvironment, PlaidError, PlaidItem,
+    RemoveItemResponse, SandboxPublicTokenResponse,
 };
 pub use snapshot::{AccountRecord, Category, Snapshot, Status};

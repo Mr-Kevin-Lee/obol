@@ -1,0 +1,194 @@
+{
+  "created_at": "2026-07-01T19:32:21Z",
+  "expiration": "2026-07-01T20:02:21Z",
+  "link_sessions": [
+    {
+      "events": [
+        {
+          "event_id": "93a8b192-0e7d-452e-b05f-b167f68d0587",
+          "event_metadata": {
+            "institution_id": "ins_56",
+            "institution_name": "Chase",
+            "request_id": "569969dca515a7a"
+          },
+          "event_name": "HANDOFF",
+          "timestamp": "2026-07-01T19:33:26Z"
+        },
+        {
+          "event_id": "5b648adb-2db7-4cc3-adde-72a9a61a295b",
+          "event_metadata": {
+            "request_id": "5a8d6ba62fc16ec"
+          },
+          "event_name": "SKIP_SUBMIT_PHONE",
+          "timestamp": "2026-07-01T19:33:25Z"
+        },
+        {
+          "event_id": "84a1b645-4a3d-4c2e-b24f-444745ed33b7",
+          "event_metadata": {
+            "request_id": "5a8d6ba62fc16ec",
+            "view_name": "SUBMIT_PHONE"
+          },
+          "event_name": "TRANSITION_VIEW",
+          "timestamp": "2026-07-01T19:33:22Z"
+        },
+        {
+          "event_id": "5d0edb36-5038-4dfc-8e3d-183799aede54",
+          "event_metadata": {
+            "request_id": "982d12e0dce6a09",
+            "view_name": "CONSENT"
+          },
+          "event_name": "TRANSITION_VIEW",
+          "timestamp": "2026-07-01T19:33:20Z"
+        },
+        {
+          "event_id": "d95af6f5-d0b1-4e1e-a476-5fcf818ef965",
+          "event_metadata": {
+            "institution_id": "ins_56",
+            "institution_name": "Chase",
+            "request_id": "58814707d0e9ccc",
+            "view_name": "SELECT_ACCOUNT"
+          },
+          "event_name": "TRANSITION_VIEW",
+          "timestamp": "2026-07-01T19:33:15Z"
+        },
+        {
+          "event_id": "58b3f0e0-2d38-489c-b5be-c7220c77270b",
+          "event_metadata": {
+            "institution_id": "ins_56",
+            "institution_name": "Chase",
+            "request_id": "329cad964b0b73b"
+          },
+          "event_name": "OPEN_OAUTH",
+          "timestamp": "2026-07-01T19:32:42Z"
+        },
+        {
+          "event_id": "2f7076f8-f08f-4269-b9cd-1c4777337bec",
+          "event_metadata": {
+            "institution_id": "ins_56",
+            "institution_name": "Chase",
+            "request_id": "329cad964b0b73b",
+            "view_name": "OAUTH"
+          },
+          "event_name": "TRANSITION_VIEW",
+          "timestamp": "2026-07-01T19:32:41Z"
+        },
+        {
+          "event_id": "412f99ea-c069-4e6b-a79a-5ea0b95f402c",
+          "event_metadata": {
+            "institution_id": "ins_56",
+            "institution_name": "Chase",
+            "request_id": "51a4cb55b4299bd"
+          },
+          "event_name": "SELECT_INSTITUTION",
+          "timestamp": "2026-07-01T19:32:40Z"
+        },
+        {
+          "event_id": "2075b458-8d72-4bef-841e-b5f08f82824a",
+          "event_metadata": {
+            "request_id": "51a4cb55b4299bd",
+            "view_name": "SELECT_INSTITUTION"
+          },
+          "event_name": "TRANSITION_VIEW",
+          "timestamp": "2026-07-01T19:32:39Z"
+        },
+        {
+          "event_id": "4e825a83-946b-4476-b34f-36b2695cb93f",
+          "event_metadata": {
+            "request_id": "053cc07329b5b7a"
+          },
+          "event_name": "SKIP_SUBMIT_PHONE",
+          "timestamp": "2026-07-01T19:32:38Z"
+        },
+        {
+          "event_id": "b526653f-bc3d-44f9-9cb8-3ed4e1f451f6",
+          "event_metadata": {
+            "request_id": "053cc07329b5b7a",
+            "view_name": "CONSENT"
+          },
+          "event_name": "OPEN",
+          "timestamp": "2026-07-01T19:32:36Z"
+        },
+        {
+          "event_id": "fea89f85-86be-4c98-b6b5-912eb4980e03",
+          "event_metadata": {
+            "request_id": "053cc07329b5b7a",
+            "view_name": "SUBMIT_PHONE"
+          },
+          "event_name": "TRANSITION_VIEW",
+          "timestamp": "2026-07-01T19:32:36Z"
+        },
+        {
+          "event_id": "ed86161b-e716-4b9d-af66-fe9069e13be1",
+          "event_metadata": {
+            "request_id": "053cc07329b5b7a",
+            "view_name": "CONSENT"
+          },
+          "event_name": "TRANSITION_VIEW",
+          "timestamp": "2026-07-01T19:32:36Z"
+        }
+      ],
+      "finished_at": "2026-07-01T19:33:25.676890309Z",
+      "link_session_id": "019f1f2b-4056-71a9-9d4a-97b4d619e45b",
+      "results": {
+        "bank_income_results": [],
+        "cra_item_add_results": [],
+        "cra_update_results": [],
+        "document_income_results": null,
+        "item_add_results": [
+          {
+            "accounts": [
+              {
+                "class_type": null,
+                "id": "vyR9kMkbwVigNr7Z1dEWT4yELQA8PJtqj89PV",
+                "mask": "0000",
+                "name": "Plaid Checking",
+                "subtype": "checking",
+                "type": "depository",
+                "verification_status": null
+              },
+              {
+                "class_type": null,
+                "id": "R61X9Q9JagI73erEK1QXUk8drlaGPMUaKnmL1",
+                "mask": "1111",
+                "name": "Plaid Saving",
+                "subtype": "savings",
+                "type": "depository",
+                "verification_status": null
+              },
+              {
+                "class_type": null,
+                "id": "65BN7e7J3WHpLR8vboBgtzon45MQK3i8WdVqM",
+                "mask": "9002",
+                "name": "Plaid Cash Management",
+                "subtype": "cash management",
+                "type": "depository",
+                "verification_status": null
+              }
+            ],
+            "institution": {
+              "institution_id": "ins_56",
+              "name": "Chase"
+            },
+            "public_token": "public-sandbox-ea1e231f-e091-485a-b2a9-b2fa9e57774d"
+          }
+        ],
+        "payroll_income_results": []
+      },
+      "started_at": "2026-07-01T19:32:36.054243643Z"
+    }
+  ],
+  "link_token": "link-sandbox-a23680ff-1c91-4013-954c-de99ba98dad9",
+  "metadata": {
+    "client_name": "Obol",
+    "country_codes": [
+      "US"
+    ],
+    "initial_products": [
+      "auth"
+    ],
+    "language": "en",
+    "redirect_uri": null,
+    "webhook": null
+  },
+  "request_id": "da3642033e9c0e0"
+}
