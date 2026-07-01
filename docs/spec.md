@@ -293,6 +293,81 @@ throwaway work — the HTTP interface phase adds a second front end, not a
 rewrite. See §15 for the phased build order and §14 for the specific
 libraries behind each interface.
 
+### 6.2 Data flow (the default run)
+
+`main.rs` is a thin `clap` command dispatcher — different subcommands
+compose the same core calls differently, so the flow below isn't one
+linear function but the body shared by the interactive default command and
+(mostly) `obol snapshot`:
+
+- **`obol` (default, interactive TUI):** load sources → fetch → save → render.
+- **`obol snapshot` (headless, for `launchd`/FR20):** load sources → fetch
+  → save. No render step — logs the per-source outcome (§4 auditability)
+  and exits.
+- **`obol sources`:** jumps straight to the Sources screen (§10.1) — no
+  fetch at all.
+
+**First run branches before any of this.** If `sources.yaml` is missing or
+empty, core creates an empty one (§10.1) and the CLI opens directly to the
+Sources screen with a prompt to add a source — it does not run a snapshot
+against an empty source list and render a blank dashboard.
+
+**Steady-state flow, core calls in order:**
+
+1. `core::sources::load_or_init()` — reads `sources.yaml`, creating it if
+   absent (§10.1).
+2. `core::snapshot::run(sources, &dyn CredentialSource)` — the snapshot
+   engine (§6 diagram). Internally:
+   - Providers are instantiated once per **provider type**, not per
+     source (so e.g. all Plaid sources share one HTTP client) — looked up
+     from the `provider_registry` (§10).
+   - Per source, concurrently (sources are independent I/O — §9's
+     per-source isolation extends naturally to concurrent fetch, and
+     §7.1's rate limits are nowhere near a concern at this volume):
+     - Resolve credentials: Plaid sources pull the stored access token
+       from Keychain directly (no prompt, §8); `webdriver` and
+       `manual_entry` sources go through the `CredentialSource` callback
+       (below).
+     - Call `provider.fetch()` wrapped in the `RetryIf`-based retry
+       policy (§9, D10).
+   - Assemble results into a `Snapshot`: PII-scrub (§11.1), build one
+     `AccountEntry` per source with `status: "ok"` or `"error"` (§9's
+     per-source isolation — one failure never aborts the run).
+3. `core::storage::save_snapshot(&snapshot)` — atomic write, `0600`
+   (§11.2).
+4. `core::storage::load_recent_snapshots(n)` — independent of steps 2–3;
+   feeds the Sources screen's "last updated N runs ago" and the stretch
+   trend chart (§13), not the net-worth figure itself.
+5. `core::networth::calculate(&snapshot)` — pure function, depends
+   **only** on the fresh snapshot from step 2, not on step 4's history.
+6. **CLI-only, not core:** render (`ratatui`) using the snapshot, net
+   worth summary, recent history, and the Plaid Item usage counter (§7.1).
+
+Steps 3 and 4 have no data dependency on each other and can run
+concurrently; step 5 depends only on step 2's output, not step 4's.
+
+**The `CredentialSource` callback (decision D12, §16).** §6.1 requires
+core to contain no UI code, but §8 requires interactive prompting for
+webdriver credentials and the manual-entry balance on every run — both
+needed *before* `provider.fetch()` can be called, since `fetch()` takes
+`credentials: Option<&Credentials>` rather than prompting internally. The
+core snapshot engine takes a trait object rather than importing a UI
+crate:
+
+```rust
+trait CredentialSource {
+    /// Called once per source that needs interactive input this run
+    /// (webdriver credentials, or the manual-entry balance). Never called
+    /// for Plaid sources — those resolve from Keychain internally.
+    fn provide(&self, source: &SourceConfig) -> Option<Credentials>;
+}
+```
+
+The CLI implements this with a masked terminal prompt; the future HTTP
+interface (§14, D7) implements it as a form post. This is what lets both
+front ends share `core::snapshot::run()` unchanged, consistent with
+§6.1's "same core, two interfaces."
+
 ## 7. Data source strategy
 
 Per your direction: **aggregator where a free option exists, browser automation
@@ -400,6 +475,10 @@ existing guidance to do iterative testing there (§7).
   (masked input, works identically in CLI/TUI and the HTTP interface) —
   except Plaid sources, which use a stored access token instead (decision
   D2, §16).
+- **Implementation:** this prompting is threaded through the core snapshot
+  engine via the `CredentialSource` trait (§6.2, decision D12) rather than
+  core importing a UI crate directly — one callback interface, implemented
+  differently by each front end.
 - Non-Plaid credentials (browser automation passwords) are wrapped in
   `secrecy::Secret` immediately on input, live only for the duration of that
   source's fetch call, and are zeroized on drop via `zeroize` — see §4 for
@@ -421,10 +500,72 @@ existing guidance to do iterative testing there (§7).
   attempt.
 - Retries apply to transient errors (timeouts, 5xx, connection resets) only —
   not to auth failures, which fail fast.
+- **Implementation: `tokio-retry`'s `RetryIf`** (decision D10, §16) —
+  `ExponentialBackoff::from_millis(2000).map(jitter).take(3)` for the
+  strategy, with a `condition` closure that inspects the error and returns
+  `false` for auth failures so they short-circuit instead of retrying. The
+  per-attempt 15s hard timeout wraps each call via `tokio::time::timeout`,
+  since `tokio-retry` itself doesn't impose one.
 - **Per-source isolation:** a failed source produces a `status: "error"` entry
   in the snapshot with a human-readable message; it does not raise or abort
   the run. The dashboard renders every other panel normally and shows a clear
   "data unavailable" state for the failed one (not a blank or crashed panel).
+
+### 9.1 Failure modes beyond per-source retry
+
+The scenarios above cover one source failing transiently. The following are
+distinct failure modes, worked through explicitly rather than left as
+implicit gaps (decision D13, §16):
+
+- **All sources fail in one run.** Net worth (§12) is only ever computed
+  over `status: "ok"` accounts — if that set is empty, the dashboard does
+  not render "$0" (indistinguishable from a genuine zero net worth). It
+  shows an explicit failure state instead ("Net worth unavailable — 0/N
+  sources returned data this run"), with every per-source panel still
+  showing its own individual error.
+- **Snapshot persistence is best-effort, not blocking.** If
+  `core::storage::save_snapshot` fails (disk full, permissions, unexpected
+  I/O error), the run does not abort — the CLI/TUI still renders the
+  in-memory snapshot just fetched, but surfaces a clear warning that this
+  run's data was not written to history (FR11's "every run creates a
+  snapshot" didn't hold this time). The failure is logged (§4
+  auditability) but never blocks the user from seeing what was just
+  fetched.
+- **A Plaid Keychain read failure is treated as a relink signal, not a
+  generic error.** If the stored access token can't be read (locked
+  Keychain, revoked/missing entry), that source's panel shows `status:
+  "error"` with a message pointing directly at the Sources screen's
+  existing "Reconnect" flow (§10.1's update-mode Link) — a missing or
+  invalid token means the Item needs to be re-linked, not retried.
+- **A `sources.yaml` that fails to parse** (YAML syntax error, structurally
+  invalid) blocks that run entirely and says so plainly — "`sources.yaml`
+  could not be parsed: `<underlying error>`" — rather than silently
+  falling back to an empty source list or guessing at a partial parse. The
+  whole file is unusable until it's fixed (from the Sources screen, or by
+  hand, since it's still a plain YAML file on disk).
+- **A syntactically valid entry referencing an unknown `provider:` name**
+  (typo, or a provider not yet implemented) is a **per-source** failure,
+  not a whole-run failure, consistent with this section's isolation
+  principle — that one source gets `status: "error"` ("unknown provider:
+  'x'"), every other valid source fetches normally.
+- **WebDriver infrastructure failures are a distinct error category from a
+  bad login**, and are not retried (retrying doesn't fix a missing
+  `chromedriver`/`geckodriver` binary or a WebDriver session that failed
+  to start) — same fail-fast treatment as auth failures, but with a
+  diagnosable message distinct from "login failed" (e.g. "chromedriver not
+  found on PATH" vs. "authentication failed").
+- **Concurrent runs are serialized with an advisory file lock**, not left
+  to race — a scheduled `launchd` run (§15, v0.4) overlapping with an
+  interactive session could otherwise double-write `sources.yaml`, corrupt
+  an in-progress atomic write, or double-increment the Plaid Item counter
+  (§7.1). A single lock file (`.lock` in the app's storage directory, §4)
+  is held for the duration of the write-critical sections — config writes,
+  snapshot writes, Item counter increments — using an OS-level advisory
+  lock (`flock`, via the `fs2` or `fslock` crate; a plain
+  `std::sync::Mutex` doesn't help here since these are separate
+  processes, not threads). A run that can't acquire the lock within a
+  short timeout exits with a clear "another instance appears to be
+  running" message rather than blocking indefinitely.
 
 ## 10. Connector architecture (source-agnostic, provider-swappable)
 
@@ -448,7 +589,7 @@ trait Provider {
         &self,
         source: &SourceConfig,
         credentials: Option<&Credentials>,
-    ) -> Result<Vec<AccountBalance>, ProviderError>;
+    ) -> Result<Vec<Box<dyn Account>>, ProviderError>;
 }
 
 fn provider_registry() -> HashMap<&'static str, Box<dyn Fn() -> Box<dyn Provider>>> {
@@ -603,6 +744,37 @@ shouldn't require a schema version bump):
 - Assets: `checking`, `money_market`, `brokerage`, `retirement_401k`, `529`, `rsu_stock`
 - Liabilities: `credit_card`, `mortgage`, `student_loan`
 
+**Shared `Account` trait (decision D11, §16).** Mirroring the `Provider`
+trait's role in §10, `Asset` and `Liability` implement one common `Account`
+trait rather than being distinguished by scattered `if category == ...`
+checks throughout net worth calc (§12) and dashboard rendering (§13):
+
+```rust
+trait Account {
+    fn account_key(&self) -> &str;
+    fn institution(&self) -> &str;
+    fn balance(&self) -> Option<f64>;
+    fn status(&self) -> &AccountStatus;
+    /// Signed contribution to net worth — positive for assets, negative
+    /// for liabilities. Centralizes the one place that sign logic lives.
+    fn net_worth_contribution(&self) -> f64;
+}
+
+struct Asset { account_key: String, institution: String, r#type: String, balance: Option<f64>, status: AccountStatus }
+struct Liability { account_key: String, institution: String, r#type: String, balance: Option<f64>, status: AccountStatus }
+```
+
+`Provider::fetch` (§10) returns `Vec<Box<dyn Account>>` instead of a bare
+struct — a provider already knows a source's category from `SourceConfig`
+(the `category:` field in `sources.yaml`), so it constructs an `Asset` or
+`Liability` directly. Net worth calc (§12) and dashboard rendering (§13)
+then only ever call `.net_worth_contribution()` / `.balance()` /
+`.status()` through the trait, never branch on category by hand. This is a
+runtime/domain-layer abstraction only — it doesn't change the on-disk JSON
+schema (§11.2), which stays a flat `category` field per record; the storage
+layer converts trait objects to/from that flat shape at the serialization
+boundary.
+
 ### 11.1 PII scrubbing rules
 
 Snapshots store **no**: account numbers, account holder name, institution
@@ -664,12 +836,27 @@ without invalidating historical snapshots.
   stored files are never rewritten.
 - New account types are additive and don't require a version bump; only
   breaking structural changes (field renames/removals) do.
+- **Forward compatibility, not just backward (decision D14, §16).** A
+  snapshot written by a **newer** version of the app (e.g. after
+  reinstalling an older binary, or during a downgrade) is not rejected
+  outright either. Deserialization relies on serde's default lenient
+  behavior (no `#[serde(deny_unknown_fields)]`), so unrecognized fields
+  and unrecognized account `type` values are ignored rather than causing a
+  parse failure — the binary parses what it can and ignores what it
+  can't, surfacing a visible-but-non-fatal note that some data from a
+  newer schema version was skipped, rather than failing to load the
+  snapshot at all.
 
 ## 12. Net worth & breakdown logic
 
 - **Net worth** = sum(asset balances) − sum(liability balances), computed only
   over accounts with `status: "ok"` for that run, with a visible note of which
-  sources were excluded due to failure.
+  sources were excluded due to failure. Implemented as a sum of
+  `.net_worth_contribution()` (§11) across all `Account` trait objects — the
+  asset/liability sign logic lives in exactly one place, not duplicated in
+  the summation code.
+- **All sources failed:** net worth is not shown as `$0` — see §9.1's
+  explicit "unavailable" state for this case.
 - **Stretch — asset breakdown pie chart:** group by `type` (cash, retirement,
   brokerage, 529, RSU/stock), rendered as a pie chart.
 
@@ -682,7 +869,9 @@ screen for managing connections (§10.1).
 - One panel per source, each independently rendered — a failed source shows a
   clear "unavailable" state with the error message, not a blank space or a
   crashed page.
-- Top-level net worth figure, prominent.
+- Top-level net worth figure, prominent — replaced with an explicit "Net
+  worth unavailable" state (§9.1) if every source failed this run, never a
+  numeric `$0`.
 - Assets and liabilities visually grouped separately.
 - **Colorblind-friendly palette:** use the Okabe–Ito palette (blue #0072B2,
   orange #E69F00, sky blue #56B4E9, bluish green #009E73, vermillion #D55E00,
@@ -713,7 +902,7 @@ screen for managing connections (§10.1).
 | TLS | `rustls` (via `reqwest`'s `rustls-tls` feature) | Memory-safe TLS stack, avoids linking OpenSSL and its associated CVE history |
 | Secrets | `secrecy` + `zeroize` | `secrecy` prevents accidental exposure via `Debug`/logging; `zeroize` gives deterministic, compiler-enforced wiping on drop (§4) |
 | Keychain | `security-framework` crate | Rust bindings to macOS Security.framework; same `kSecAttrAccessibleWhenUnlockedThisDeviceOnly` ACL as before |
-| Retry logic | Hand-rolled `tokio::time::sleep` + jitter, or the `backoff` crate | Same policy as §9 (3 attempts, exponential backoff, jitter) |
+| Retry logic | `tokio-retry` (`RetryIf` + `ExponentialBackoff`) | Same policy as §9 (3 attempts, exponential backoff, jitter); `RetryIf`'s condition closure is what lets auth failures fail fast instead of retrying (D10, §16) — simpler than hand-rolling the same branch |
 | **CLI/TUI (phase 1)** | `clap` + `ratatui` | `clap` for scriptable commands (`dashboard snapshot`), `ratatui` for the interactive terminal dashboard/sources screens — mature, well-regarded Rust TUI framework |
 | **GUI (phase 2)** | Local HTTP(S) endpoint (`127.0.0.1:<port>`), reachable via browser | Simpler packaging than a native GUI toolkit — no bundled UI framework. **Trade-off to design properly once we get here (decision D7, §16):** unlike a native app, a listening port has real local attack surface (other local processes, DNS-rebinding from a malicious page in another tab) that needs mitigating — session token, strict `Host` header checks, no CDN-loaded assets. Deferred until after v0.1/v0.2 are done, not designed yet |
 | Charts | `plotters` | Renders to both the TUI (via `ratatui` widgets) and the GUI canvas; colorblind-safe palette applied manually since it's a lower-level library than Plotly |
@@ -721,6 +910,7 @@ screen for managing connections (§10.1).
 | Dependency management | `Cargo.lock` (committed) | Rust's default toolchain is already lockfile-first, directly reinforcing the supply-chain principle in §4 |
 | Logging | `tracing` + `tracing-subscriber` | Backs the audit log requirement (§4) — structured, filterable, and the natural place to enforce "never log a credential or full account number" as a consistent policy rather than an ad-hoc discipline |
 | Error handling | `thiserror` in the core library (typed `ProviderError`, `SnapshotError`, etc. — see the `Provider` trait in §10); `anyhow` in the CLI/TUI binary for top-level error reporting | Conventional Rust split: typed, matchable errors in the library; ergonomic error context at the application boundary |
+| Concurrency / file locking | `fs2` (or `fslock`) — OS-level advisory lock (`flock`) on a `.lock` file in the storage directory | Serializes concurrent invocations (D13, §9.1) so a scheduled `launchd` run and an interactive session don't race on `sources.yaml`, snapshot writes, or the Plaid Item counter — `std::sync::Mutex` doesn't apply across separate processes |
 
 Given your recent hands-on work with Tokio and async Rust, this stack likely
 requires less ramp-up than the Python plan would have, on top of closing the
@@ -839,3 +1029,44 @@ Previously open questions, now resolved:
   verified as a separate, lighter-weight integration tier rather than
   forced into the same test-first loop, since live external systems aren't
   a good fit for red-green TDD.
+- **D10 — Retry logic uses the `tokio-retry` crate**, specifically `RetryIf`
+  (§9, §14), instead of hand-rolling `tokio::time::sleep` + jitter or
+  pulling in `backoff`. `RetryIf`'s condition closure is what gives fail-fast
+  auth-failure behavior for free — the alternative was writing that branch
+  by hand — while still satisfying the minimal-dependency principle (§4):
+  it's a small, single-purpose crate, not a general-purpose framework.
+- **D11 — `Asset` and `Liability` share a common `Account` trait** (§11),
+  the same interface-based pattern already used for `Provider` (§10) rather
+  than a single struct with a `category` enum field branched on throughout
+  net worth calc and dashboard rendering. `net_worth_contribution()` on the
+  trait centralizes the one piece of sign logic (positive for assets,
+  negative for liabilities) that would otherwise be duplicated wherever
+  category is checked. Purely a domain-layer abstraction — the on-disk JSON
+  schema (§11.2) is unchanged, since storage serializes/deserializes the
+  flat DTO shape, not the trait object.
+- **D12 — Interactive prompting (webdriver credentials, manual-entry
+  balance) is threaded through core via a `CredentialSource` trait**
+  (§6.2, §8), rather than giving core a UI-crate dependency or having
+  each front end duplicate the per-source orchestration logic. Plaid
+  sources bypass this entirely, resolving their access token from
+  Keychain internally (D2). This is the mechanism that keeps
+  `core::snapshot::run()` — provider instantiation, concurrent per-source
+  fetch, retry, PII scrubbing, snapshot assembly — identical between the
+  CLI/TUI and the future HTTP interface, per §6.1's "same core, two
+  interfaces."
+- **D13 — Failure modes beyond per-source retry** (§9.1): total-outage net
+  worth display (explicit "unavailable" state, never `$0`), best-effort
+  (non-blocking) snapshot persistence, Plaid Keychain failures treated as
+  a relink prompt rather than a generic error, a malformed `sources.yaml`
+  surfaced as a clear parse error distinct from a single bad source entry
+  (which stays per-source, per §9's isolation principle), WebDriver
+  infrastructure errors kept distinct from login failures and not
+  retried, and concurrent runs serialized via an OS-level advisory file
+  lock (`fs2`/`fslock`, §14) rather than left to race on shared state.
+- **D14 — Forward compatibility for the snapshot schema** (§11.3):
+  alongside the existing backward-compatibility migration chain, the
+  loader also tolerates snapshots written by a *newer* binary — unknown
+  fields and account types are ignored rather than rejected, so a
+  downgrade or a snapshot from a newer version doesn't hard-fail. Same
+  "old snapshots must still render" spirit as FR14, extended in the other
+  direction.
