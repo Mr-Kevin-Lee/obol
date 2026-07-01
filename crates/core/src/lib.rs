@@ -3,6 +3,7 @@ mod migration;
 mod networth;
 mod pii;
 mod plaid;
+mod provider;
 mod snapshot;
 
 pub use account::{Account, AccountStatus, Asset, Liability};
@@ -14,5 +15,8 @@ pub use plaid::{
     LinkInstitution, LinkSession, LinkSessionResults, LinkTokenStatusResponse, PlaidAccount,
     PlaidBalances, PlaidClient, PlaidConfig, PlaidEnvironment, PlaidError, PlaidItem,
     RemoveItemResponse, SandboxPublicTokenResponse,
+};
+pub use provider::{
+    provider_registry, Credentials, Provider, ProviderError, ProviderFactory, SourceConfig,
 };
 pub use snapshot::{AccountRecord, Category, Snapshot, Status};

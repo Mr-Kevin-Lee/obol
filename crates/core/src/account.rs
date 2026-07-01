@@ -3,7 +3,7 @@
 /// `Asset` and `Liability` implement this rather than being distinguished by
 /// a `category` field branched on throughout net worth calc and dashboard
 /// rendering.
-pub trait Account {
+pub trait Account: Send + Sync + std::fmt::Debug {
     fn account_key(&self) -> &str;
     fn institution(&self) -> &str;
     fn balance(&self) -> Option<f64>;
