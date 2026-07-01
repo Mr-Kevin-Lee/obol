@@ -401,7 +401,7 @@ otherwise.**
 | Vanguard | Brokerage, 529, money market | Plaid | Investments product; verify 529 sub-account support during spike |
 | Fidelity | 401k | Plaid | Retirement accounts generally supported |
 | Morgan Stanley / E-Trade | Stocks, RSUs | Plaid | Confirm during spike — post-acquisition institution coverage varies |
-| Apple Card (Goldman Sachs) | Credit card | **Manual entry**, fallback browser automation | No web portal — lives only in iPhone Wallet. Neither Plaid nor WebDriver automation can reach it. Recommend a simple "enter balance" panel for this one source. |
+| Apple Card (Goldman Sachs) | Credit card | **Manual entry** for v1; browser automation is a real future option | Has a web portal at card.apple.com (corrected — originally assumed no portal existed). No third-party API access to it exists, so v1 stays manual entry (D3) rather than adding complexity for one account — but unlike student loans/mortgage (no servicer chosen yet), a concrete WebDriver spike target now exists if that ever gets revisited. Recommend a simple "enter balance" panel for now. |
 | Student loans (stretch) | TBD | Browser automation | Servicer TBD; revisit once selected |
 | Mortgage (stretch) | TBD | Browser automation | Servicer TBD |
 
@@ -1050,7 +1050,13 @@ Previously open questions, now resolved:
 - **D3 — Apple Card handling:** kept in v1 as a manual-entry form field each
   run, using the `manual_entry` provider (§10) — same snapshot schema and
   dashboard panel treatment as every automated source, just no credential
-  prompt or retry logic involved.
+  prompt or retry logic involved. **Correction:** the original premise that
+  Apple Card has no web portal was wrong — it has one at card.apple.com.
+  Manual entry stands for v1 regardless (no reason to add browser-automation
+  complexity for one account that already works via a simple form), but
+  this makes Apple Card a legitimate future target for the fantoccini spike
+  (§15) if browser automation for it is ever revisited — unlike student
+  loans/mortgage, which have no chosen servicer yet to even target.
 - **D4 — Provider swappability:** the connector layer is split into
   `Source` (config) and `Provider` (implementation) so that moving off
   Plaid — for one institution or entirely — requires a new `Provider` class
