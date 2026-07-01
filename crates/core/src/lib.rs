@@ -1,4 +1,5 @@
 mod account;
+mod item_usage;
 mod keychain;
 mod migration;
 mod networth;
@@ -10,6 +11,7 @@ mod retry;
 mod snapshot;
 
 pub use account::{Account, AccountStatus, Asset, Liability};
+pub use item_usage::{ItemUsageCounter, PLAID_ITEM_LIMIT, PLAID_ITEM_WARNING_THRESHOLD};
 pub use keychain::{
     delete_plaid_access_token, read_plaid_access_token, read_plaid_app_credentials,
     store_plaid_access_token, store_plaid_app_credentials, KeychainError,
