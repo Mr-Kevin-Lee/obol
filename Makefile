@@ -1,4 +1,4 @@
-.PHONY: check fmt lint test
+.PHONY: check fmt lint test audit
 
 check: fmt lint test
 
@@ -10,3 +10,7 @@ lint:
 
 test:
 	cargo test --workspace
+
+# Requires `cargo install cargo-audit` (one-time, not a project dependency).
+audit:
+	cargo audit

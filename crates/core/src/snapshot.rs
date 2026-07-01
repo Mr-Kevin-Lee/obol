@@ -12,19 +12,66 @@ pub struct Snapshot {
     pub accounts: Vec<AccountRecord>,
 }
 
+/// The on-disk representation of one account entry (spec §11.2).
+///
+/// Fields are `pub(crate)`, not `pub` — construction is restricted to
+/// within `obol-core` (in practice, to [`crate::pii::scrub`] and serde's
+/// derived `Deserialize`), so nothing outside this crate can build one
+/// with an unhashed account number or any other PII field that
+/// `RawAccountData` carries but this struct doesn't expose a slot for.
+/// Read access from outside the crate goes through the accessor methods
+/// below.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct AccountRecord {
-    pub account_key: String,
-    pub source_id: String,
-    pub institution: String,
-    pub category: Category,
+    pub(crate) account_key: String,
+    pub(crate) source_id: String,
+    pub(crate) institution: String,
+    pub(crate) category: Category,
     #[serde(rename = "type")]
-    pub account_type: String,
-    pub balance: Option<f64>,
-    pub currency: String,
-    pub status: Status,
+    pub(crate) account_type: String,
+    pub(crate) balance: Option<f64>,
+    pub(crate) currency: String,
+    pub(crate) status: Status,
     #[serde(skip_serializing_if = "Option::is_none", default)]
-    pub error_message: Option<String>,
+    pub(crate) error_message: Option<String>,
+}
+
+impl AccountRecord {
+    pub fn account_key(&self) -> &str {
+        &self.account_key
+    }
+
+    pub fn source_id(&self) -> &str {
+        &self.source_id
+    }
+
+    pub fn institution(&self) -> &str {
+        &self.institution
+    }
+
+    pub fn category(&self) -> Category {
+        self.category
+    }
+
+    pub fn account_type(&self) -> &str {
+        &self.account_type
+    }
+
+    pub fn balance(&self) -> Option<f64> {
+        self.balance
+    }
+
+    pub fn currency(&self) -> &str {
+        &self.currency
+    }
+
+    pub fn status(&self) -> Status {
+        self.status
+    }
+
+    pub fn error_message(&self) -> Option<&str> {
+        self.error_message.as_deref()
+    }
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]

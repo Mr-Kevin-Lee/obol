@@ -405,16 +405,16 @@ otherwise.**
 | Student loans (stretch) | TBD | Browser automation | Servicer TBD; revisit once selected |
 | Mortgage (stretch) | TBD | Browser automation | Servicer TBD |
 
-**Why Plaid first:** confirmed directly during signup (as of this writing)
-that Plaid's current Production onboarding is a Pay-as-you-go plan — no
-monthly minimum, no upfront commitment, but real per-call/per-account
-pricing, not the free Trial originally assumed here. That's corrected now
-rather than left stale. The practical cost is still low for this project:
-decision D22 (§16) confirmed via real Sandbox testing that the Balance
-product alone — call-based, no recurring per-account fee — returns usable
-current-balance data for every account type this project needs, so
-Investments and Liabilities (each billed per-account/month) aren't needed
-at all. Estimated cost at ~4 Items run biweekly: well under $1/month.
+**Why Plaid first:** Plaid offers a free Trial plan for new US/Canada teams
+supporting up to 10 live Production accounts with real data — comfortably
+covers your 5 non-Apple-Card institutions. No cost, no per-call billing,
+until you exceed 10 linked accounts. Decision D22 (§16) separately
+confirmed via real Sandbox testing that the Balance product alone —
+call-based, no recurring per-account fee — returns usable current-balance
+data for every account type this project needs, so Investments and
+Liabilities (each normally subscription-billed per Item, waived under
+Trial) aren't needed at all. That keeps cost low even if this project
+ever outgrows Trial.
 
 **What "Item" actually means:** a Plaid Item is one login at one institution,
 not one account. If Vanguard exposes brokerage + 529 + money market under a
@@ -1198,8 +1198,7 @@ Previously open questions, now resolved:
   dates — Investments and Liabilities were dropped entirely: one Plaid
   product instead of three, no recurring per-account billing (Balance is
   pure per-call), and no uncertain raw-JSON response types left
-  unresolved in the client. Also corrected §7's stale "free Trial plan"
-  claim in the same pass — real Plaid signup (as of this writing) is a
-  Pay-as-you-go plan with per-call/per-account pricing, not a free trial;
-  the Balance-only design keeps actual cost low (well under $1/month at
-  this project's scale) regardless.
+  unresolved in the client. Confirmed separately that Plaid's free Trial
+  plan (§7) does apply as originally assumed — this simplification isn't
+  a response to a billing surprise, just a straightforward reduction in
+  product surface and future cost exposure.
