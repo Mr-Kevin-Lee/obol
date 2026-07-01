@@ -602,9 +602,10 @@ Two deliberately separate concepts, so that moving away from Plaid — in whole
 or for a single institution — never touches the snapshot engine, retry logic,
 storage layer, or dashboard:
 
-- **Source** — a config-driven declaration of *one real-world account group*
-  ("Chase checking + credit card"). Owns category, type, institution name,
-  and which provider reaches it.
+- **Source** — a config-driven declaration of *one real-world account*
+  ("Chase checking" — not "Chase checking + credit card"; see D23 for why
+  that's per-account, not per-login). Owns category, type, institution
+  name, and which provider reaches it.
 - **Provider** — the mechanics of *how* to reach a class of source: Plaid,
   WebDriver-based browser automation, manual entry, and (later, if desired)
   something like SimpleFIN or Yodlee. A provider knows nothing about any
@@ -643,6 +644,7 @@ sources:
     account_salt: "b64:9fQxK2..."  # generated once at add-time, §11.1
     provider_config:
       plaid_institution_id: ins_56
+      plaid_account_id: "9pwLNPvLjnsDVA4qx8NoHPrdNy6vldt4NpKWx"  # D23
 
   - id: vanguard_investments
     provider: plaid
@@ -744,10 +746,16 @@ fields, since Plaid Link is a hosted authentication flow:
 3. Dashboard polls `/link/token/get` (results available for 6 hours post-
    session) until the session completes.
 4. On success, exchanges the `public_token` for an `access_token`, stores it
-   in Keychain, **increments `plaid_items_created_lifetime` (§7.1)**, and
-   writes the new source entry, including a freshly generated
-   `account_salt` (§11.1) — no separate webhook server needed for a
-   single-user local tool.
+   in Keychain, and **increments `plaid_items_created_lifetime` (§7.1)
+   exactly once** (the counter tracks Items/logins, not accounts — see
+   D23). The Link response includes every account under that Item (e.g.
+   checking + savings + a cash management account, per real Sandbox
+   testing) — the dashboard lets you pick which of those to actually
+   track, and **writes one `sources.yaml` entry per selected account**
+   (D23), each with its own freshly generated `account_salt` (§11.1) and
+   a `plaid_account_id` in `provider_config` identifying which specific
+   account it is. No separate webhook server needed for a single-user
+   local tool.
 
 **Why up to 6 hours (decision D18, §16):** that's Plaid's own guarantee
 window for how long a completed Link session's result stays retrievable
@@ -1194,6 +1202,23 @@ Previously open questions, now resolved:
   *update* landing silently, but doesn't catch a known CVE in a
   dependency that was already pinned before the CVE was disclosed. This
   is a deliberate, separate practice from pinning, not redundant with it.
+- **D23 — A `Source` is one Plaid account, not one Item/login** (§10,
+  §10.1): surfaced while implementing `PlaidProvider` (task 18) — §10's
+  original "Chase checking + credit card" example implied one source
+  could span both, but `SourceConfig`'s `category`/`type` fields are
+  singular, and real Sandbox testing confirmed one Chase Item can return
+  several accounts (checking, savings, a cash management account) in a
+  single Link session. Resolved: one source per account, disambiguated
+  via a `plaid_account_id` field in `provider_config` (matching by
+  account type/subtype alone breaks if two accounts share a subtype).
+  `PlaidProvider::fetch()` calls Balance once per Item and filters the
+  response down to the one account matching this source's ID. One Link
+  session can therefore produce multiple `sources.yaml` entries — the
+  Sources screen's add flow (tasks 19/24/25) needs to let you pick which
+  returned accounts to actually track, not assume one Link = one source.
+  The Item counter (§7.1) still increments once per Item regardless of
+  how many accounts/sources come from it — it tracks logins, not
+  accounts.
 - **D22 — Plaid integration uses the Balance product only** (§7, §14):
   built and Sandbox-tested Investments Holdings and Liabilities clients
   first (per the original plan), then tested whether the plain Balance

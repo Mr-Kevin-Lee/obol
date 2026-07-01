@@ -33,9 +33,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     println!(
         "Environment: {}",
-        match environment {
+        match &environment {
             PlaidEnvironment::Sandbox => "Sandbox",
             PlaidEnvironment::Production => "PRODUCTION — this will link a real institution",
+            PlaidEnvironment::Custom(url) => url.as_str(),
         }
     );
 

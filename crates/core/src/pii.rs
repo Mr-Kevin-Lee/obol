@@ -45,7 +45,11 @@ pub fn scrub(raw: &RawAccountData, account_salt: &str) -> AccountRecord {
     }
 }
 
-fn hash_account_number(account_number: &str, salt: &str) -> String {
+/// Salted, one-way hash of a raw account identifier (spec §11.1). Public
+/// within the crate so providers (e.g. `PlaidProvider`) can compute an
+/// `Account`'s `account_key` directly from whatever raw identifier they
+/// get back — the account never needs to carry the raw number itself.
+pub(crate) fn hash_account_number(account_number: &str, salt: &str) -> String {
     let mut hasher = Sha256::new();
     hasher.update(salt.as_bytes());
     hasher.update(account_number.as_bytes());

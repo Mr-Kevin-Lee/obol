@@ -13,17 +13,21 @@ use thiserror::Error;
 const SANDBOX_BASE_URL: &str = "https://sandbox.plaid.com";
 const PRODUCTION_BASE_URL: &str = "https://production.plaid.com";
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PlaidEnvironment {
     Sandbox,
     Production,
+    /// Points at an arbitrary base URL instead — for tests, a local
+    /// mock HTTP server (`wiremock`) standing in for Plaid's real API.
+    Custom(String),
 }
 
 impl PlaidEnvironment {
-    fn base_url(self) -> &'static str {
+    fn base_url(&self) -> &str {
         match self {
             PlaidEnvironment::Sandbox => SANDBOX_BASE_URL,
             PlaidEnvironment::Production => PRODUCTION_BASE_URL,
+            PlaidEnvironment::Custom(url) => url,
         }
     }
 }

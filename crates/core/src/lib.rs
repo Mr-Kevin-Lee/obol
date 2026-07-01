@@ -4,6 +4,7 @@ mod migration;
 mod networth;
 mod pii;
 mod plaid;
+mod plaid_provider;
 mod provider;
 mod snapshot;
 
@@ -21,6 +22,7 @@ pub use plaid::{
     PlaidBalances, PlaidClient, PlaidConfig, PlaidEnvironment, PlaidError, PlaidItem,
     RemoveItemResponse, SandboxPublicTokenResponse,
 };
+pub use plaid_provider::PlaidProvider;
 pub use provider::{
     provider_registry, Credentials, Provider, ProviderError, ProviderFactory, SourceConfig,
 };
