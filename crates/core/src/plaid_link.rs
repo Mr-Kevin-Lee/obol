@@ -6,14 +6,15 @@
 //! accounts to track is a later, UI-layer concern (tasks 24/25) — this
 //! takes that choice as an input, it doesn't make it.
 
+use std::collections::HashSet;
 use std::path::Path;
 
-use secrecy::Secret;
+use secrecy::{ExposeSecret, Secret};
 use thiserror::Error;
 
 use crate::{
-    add_source, store_plaid_access_token, Category, ItemUsageCounter, KeychainError, PlaidClient,
-    PlaidError, SourceConfig, SourcesError,
+    add_source, store_plaid_access_token, Category, ItemUsageCounter, PlaidClient, PlaidError,
+    SourceConfig, SourcesError,
 };
 
 #[derive(Debug, Error)]
@@ -22,8 +23,6 @@ pub enum CompleteLinkError {
     ItemLimitReached,
     #[error("Plaid API error: {0}")]
     Plaid(#[from] PlaidError),
-    #[error("keychain error: {0}")]
-    Keychain(#[from] KeychainError),
     #[error("sources.yaml error: {0}")]
     Sources(#[from] SourcesError),
 }
@@ -52,6 +51,16 @@ pub struct SelectedAccount {
 /// Checks `item_counter.is_blocked()` *first*, before any network call
 /// or side effect — §7.1 requires "Connect via Plaid" to be blocked
 /// entirely at 10/10, not just warned about.
+///
+/// **D24 fallback:** if `store_plaid_access_token` fails for a given
+/// account (the parked Keychain signing bug, not a hypothetical), that
+/// account's token is embedded instead as `provider_config
+/// .dev_access_token` — the same dev/testing bridge `engine.rs`'s
+/// `resolve_credentials` already checks first, before Keychain. This
+/// keeps the whole Link flow usable end-to-end regardless of D24's
+/// status, and stops applying itself automatically the moment a real
+/// Keychain write starts succeeding again — no separate code path to
+/// remember to delete later.
 pub async fn complete_plaid_link(
     client: &PlaidClient,
     public_token: &str,
@@ -66,13 +75,22 @@ pub async fn complete_plaid_link(
     let exchange = client.exchange_public_token(public_token).await?;
     let access_token = Secret::new(exchange.access_token);
 
+    let mut keychain_failed_for: HashSet<String> = HashSet::new();
     for account in &selected_accounts {
-        store_plaid_access_token(&account.source_id, &access_token)?;
+        if store_plaid_access_token(&account.source_id, &access_token).is_err() {
+            keychain_failed_for.insert(account.source_id.clone());
+        }
     }
 
     item_counter.increment();
 
     for account in selected_accounts {
+        let mut provider_config =
+            serde_json::json!({ "plaid_account_id": account.plaid_account_id });
+        if keychain_failed_for.contains(&account.source_id) {
+            provider_config["dev_access_token"] =
+                serde_json::Value::String(access_token.expose_secret().clone());
+        }
         let source = SourceConfig {
             id: account.source_id,
             provider: "plaid".into(),
@@ -80,7 +98,7 @@ pub async fn complete_plaid_link(
             account_type: account.account_type,
             institution: account.institution,
             account_salt: String::new(), // overwritten by add_source (D15)
-            provider_config: serde_json::json!({ "plaid_account_id": account.plaid_account_id }),
+            provider_config,
         };
         add_source(sources_path, source)?;
     }
@@ -141,10 +159,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "blocked on a parked Keychain signing issue (D24, §16) — \
-                store_plaid_access_token currently fails against a real \
-                Keychain regardless of signing; see keychain.rs's module \
-                doc comment"]
     async fn selecting_multiple_accounts_from_one_item_increments_the_counter_once() {
         let mock_server = MockServer::start().await;
         Mock::given(method("POST"))
@@ -197,6 +211,26 @@ mod tests {
 
         let sources = crate::load_or_init(&sources_path).unwrap();
         assert_eq!(sources.len(), 2);
+
+        // On this machine, store_plaid_access_token is expected to fail
+        // (the parked Keychain signing bug, D24) — confirming the
+        // dev_access_token fallback kicked in is what makes this test
+        // meaningful without a signed binary, not just "it didn't
+        // crash." If D24 ever gets fixed, this assertion is the one
+        // that will need to change (no fallback needed once Keychain
+        // storage actually works).
+        for source in &sources {
+            assert_eq!(
+                source
+                    .provider_config
+                    .get("dev_access_token")
+                    .and_then(|v| v.as_str()),
+                Some("access-sandbox-test-token"),
+                "expected the Keychain-failure fallback to embed the access token \
+                 in provider_config for source '{}'",
+                source.id
+            );
+        }
 
         crate::delete_plaid_access_token("chase_checking_test").ok();
         crate::delete_plaid_access_token("chase_savings_test").ok();

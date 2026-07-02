@@ -6,7 +6,7 @@
 
 use std::io;
 
-use crossterm::event::{self, Event};
+use crossterm::event::{self, Event, KeyCode, KeyEventKind};
 use crossterm::terminal::{
     disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen,
 };
@@ -27,28 +27,43 @@ const BLUE: Color = Color::Rgb(0, 114, 178);
 const BLUISH_GREEN: Color = Color::Rgb(0, 158, 115);
 const VERMILLION: Color = Color::Rgb(213, 94, 0);
 
+/// What the user asked for on their way out of the Dashboard screen.
+pub enum DashboardAction {
+    Quit,
+    /// `s` was pressed — jump to the Sources screen without exiting the
+    /// process. `main.rs` loops between the two screens on this signal
+    /// rather than requiring a full quit-and-rerun to manage sources.
+    GoToSources,
+}
+
 /// Enters the alternate screen, draws the dashboard once (§13: "No
-/// in-TUI refresh in v0.1" — getting new data means quitting and
-/// rerunning `obol`), waits for any keypress, then restores the
-/// terminal. Terminal setup/teardown is the one part of this module
-/// that can't be unit-tested — a real terminal is being taken over.
-pub fn run(snapshot: &Snapshot) -> io::Result<()> {
+/// in-TUI refresh in v0.1" — getting new data means re-entering this
+/// screen, not a live redraw loop within it), waits for a keypress,
+/// then restores the terminal. Terminal setup/teardown is the one part
+/// of this module that can't be unit-tested — a real terminal is being
+/// taken over.
+pub fn run(snapshot: &Snapshot) -> io::Result<DashboardAction> {
     enable_raw_mode()?;
     io::stdout().execute(EnterAlternateScreen)?;
     let mut terminal = Terminal::new(CrosstermBackend::new(io::stdout()))?;
 
     terminal.draw(|frame| draw(frame, snapshot))?;
-    // Block until any key is pressed — deliberately not a redraw loop,
-    // consistent with "no in-TUI refresh" (§13).
-    loop {
-        if let Event::Key(_) = event::read()? {
-            break;
+    let action = loop {
+        let Event::Key(key) = event::read()? else {
+            continue;
+        };
+        if key.kind != KeyEventKind::Press {
+            continue;
         }
-    }
+        match key.code {
+            KeyCode::Char('s') => break DashboardAction::GoToSources,
+            _ => break DashboardAction::Quit,
+        }
+    };
 
     disable_raw_mode()?;
     io::stdout().execute(LeaveAlternateScreen)?;
-    Ok(())
+    Ok(action)
 }
 
 fn draw(frame: &mut Frame, snapshot: &Snapshot) {
@@ -166,5 +181,8 @@ fn record_to_list_item(record: &AccountRecord) -> ListItem<'static> {
 }
 
 fn draw_footer(frame: &mut Frame, area: Rect) {
-    frame.render_widget(Paragraph::new("Press any key to quit"), area);
+    frame.render_widget(
+        Paragraph::new("s: manage sources   (any other key): quit"),
+        area,
+    );
 }

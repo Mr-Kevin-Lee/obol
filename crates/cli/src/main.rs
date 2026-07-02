@@ -11,10 +11,10 @@ use mode::{determine_mode, Mode, RequestedCommand};
 use obol_core::{CredentialSource, Credentials, SourceConfig};
 
 /// No interactive `Provider` (webdriver, manual entry) is registered
-/// yet (tasks 15+) — this is a placeholder that always declines, to be
-/// replaced with a real masked-terminal-prompt implementation once one
-/// exists. Plaid sources never reach this at all (§8, resolved from
-/// Keychain internally by the engine).
+/// yet — this is a placeholder that always declines, to be replaced
+/// with a real terminal-prompt implementation once one exists. Plaid
+/// sources never reach this at all (§8, resolved from Keychain
+/// internally by the engine).
 struct NoInteractiveProvidersYet;
 
 impl CredentialSource for NoInteractiveProvidersYet {
@@ -137,32 +137,24 @@ async fn main() {
         }
     };
 
-    // Headless snapshot wiring is still a placeholder below — Dashboard
-    // (task 23) and Sources (task 24) are wired to the real engine.
     match determine_mode(sources.is_empty(), requested) {
         Mode::FirstRunSources | Mode::Sources => {
-            if let Err(err) = sources_screen::run(&sources_path, &item_usage_path, &snapshots_dir) {
-                eprintln!("sources screen failed: {err}");
-                std::process::exit(1);
-            }
+            run_screen_loop(
+                Screen::Sources,
+                &sources_path,
+                &item_usage_path,
+                &snapshots_dir,
+            )
+            .await;
         }
         Mode::Dashboard => {
-            let mut registry = obol_core::provider_registry();
-            maybe_register_plaid(&mut registry);
-            let credential_source = NoInteractiveProvidersYet;
-
-            let result =
-                obol_core::run_and_save(&sources, &registry, &credential_source, &snapshots_dir)
-                    .await;
-            if let Some(err) = &result.save_error {
-                // §9.1: best-effort persistence — a save failure never
-                // blocks rendering what was just fetched.
-                eprintln!("warning: this run's data was not saved to history: {err}");
-            }
-            if let Err(err) = dashboard::run(&result.snapshot) {
-                eprintln!("dashboard rendering failed: {err}");
-                std::process::exit(1);
-            }
+            run_screen_loop(
+                Screen::Dashboard,
+                &sources_path,
+                &item_usage_path,
+                &snapshots_dir,
+            )
+            .await;
         }
         Mode::SnapshotHeadless => {
             println!(
@@ -172,5 +164,70 @@ async fn main() {
         Mode::NothingToSnapshot => {
             println!("No sources configured — nothing to snapshot.");
         }
+    }
+}
+
+enum Screen {
+    Dashboard,
+    Sources,
+}
+
+/// Bounces between the Dashboard and Sources screens on their `s`/`v`
+/// signals (dashboard.rs's `DashboardAction`/sources_screen.rs's
+/// `SourcesAction`) rather than requiring a full quit-and-rerun to
+/// switch between viewing and managing sources — either screen's own
+/// quit key exits this loop, and the process, entirely. Re-entering
+/// Dashboard always re-fetches: if you just came from editing sources,
+/// you want that reflected, not a stale snapshot from before the loop
+/// started.
+async fn run_screen_loop(
+    mut screen: Screen,
+    sources_path: &std::path::Path,
+    item_usage_path: &std::path::Path,
+    snapshots_dir: &std::path::Path,
+) {
+    loop {
+        screen = match screen {
+            Screen::Sources => {
+                match sources_screen::run(sources_path, item_usage_path, snapshots_dir).await {
+                    Ok(sources_screen::SourcesAction::Quit) => return,
+                    Ok(sources_screen::SourcesAction::GoToDashboard) => Screen::Dashboard,
+                    Err(err) => {
+                        eprintln!("sources screen failed: {err}");
+                        std::process::exit(1);
+                    }
+                }
+            }
+            Screen::Dashboard => {
+                let sources = match obol_core::load_or_init(sources_path) {
+                    Ok(sources) => sources,
+                    Err(err) => {
+                        eprintln!("sources.yaml could not be loaded: {err}");
+                        std::process::exit(1);
+                    }
+                };
+                let mut registry = obol_core::provider_registry();
+                maybe_register_plaid(&mut registry);
+                let credential_source = NoInteractiveProvidersYet;
+
+                let result =
+                    obol_core::run_and_save(&sources, &registry, &credential_source, snapshots_dir)
+                        .await;
+                if let Some(err) = &result.save_error {
+                    // §9.1: best-effort persistence — a save failure
+                    // never blocks rendering what was just fetched.
+                    eprintln!("warning: this run's data was not saved to history: {err}");
+                }
+
+                match dashboard::run(&result.snapshot) {
+                    Ok(dashboard::DashboardAction::Quit) => return,
+                    Ok(dashboard::DashboardAction::GoToSources) => Screen::Sources,
+                    Err(err) => {
+                        eprintln!("dashboard rendering failed: {err}");
+                        std::process::exit(1);
+                    }
+                }
+            }
+        };
     }
 }

@@ -397,10 +397,10 @@ otherwise.**
 
 | Institution | Account(s) | Recommended path | Notes |
 |---|---|---|---|
-| Chase | Checking, credit card | Plaid (free Trial tier) | Well-supported OAuth institution |
-| Vanguard | Brokerage, 529, money market | Plaid | Investments product; verify 529 sub-account support during spike |
-| Fidelity | 401k | Plaid | Retirement accounts generally supported |
-| Morgan Stanley / E-Trade | Stocks, RSUs | Plaid | Confirm during spike — post-acquisition institution coverage varies |
+| Chase | Checking, credit card | Plaid (free Trial tier) | Well-supported OAuth institution — confirmed working end-to-end against real Production data |
+| Vanguard | Brokerage, 529, money market | **Browser automation** (revised — see D25) | **Confirmed via real Production testing: Plaid does not support Vanguard at all**, not a sub-account nuance as originally assumed. Reactivates the fantoccini spike (§15, task 21) — Vanguard is now a concrete real target, not a parked "no institution available" item |
+| Fidelity | 401k | Plaid, **pending Compliance Center approval** (see D25) | **Confirmed via real Production testing:** Plaid connects but returns "no eligible accounts" — matches the Compliance-Center-gating risk already flagged below, now observed directly rather than theoretical. Blocked until that approval is requested and granted, or abandoned in favor of browser automation like Vanguard |
+| Morgan Stanley / E-Trade | Stocks, RSUs | Plaid | Not yet tested against real Production — confirm before assuming it works, given Vanguard/Fidelity's results |
 | Apple Card (Goldman Sachs) | Credit card | **Manual entry** for v1; browser automation is a real future option | Has a web portal at card.apple.com (corrected — originally assumed no portal existed). No third-party API access to it exists, so v1 stays manual entry (D3) rather than adding complexity for one account — but unlike student loans/mortgage (no servicer chosen yet), a concrete WebDriver spike target now exists if that ever gets revisited. Recommend a simple "enter balance" panel for now. |
 | Student loans (stretch) | TBD | Browser automation | Servicer TBD; revisit once selected |
 | Mortgage (stretch) | TBD | Browser automation | Servicer TBD |
@@ -417,16 +417,17 @@ Trial) aren't needed at all. That keeps cost low even if this project
 ever outgrows Trial.
 
 **What "Item" actually means:** a Plaid Item is one login at one institution,
-not one account. If Vanguard exposes brokerage + 529 + money market under a
-single sign-in, that's one Item. Estimated Item usage for this project:
+not one account. Estimated Item usage for this project, revised per D25's
+real-testing findings (Vanguard isn't reachable via Plaid at all; Fidelity's
+status is pending Compliance Center approval):
 
 | Institution | Accounts | Items |
 |---|---|---|
-| Chase | Checking + credit card | 1 (assuming shared login) |
-| Vanguard | Brokerage + 529 + money market | 1 (assuming shared login) |
-| Fidelity | 401k | 1 |
-| Morgan Stanley/E-Trade | Stocks/RSUs | 1 |
-| **Total** | | **~4 of 10**, leaving room for stretch goals |
+| Chase | Checking + credit card | 1 (assuming shared login) — confirmed |
+| Vanguard | Brokerage + 529 + money market | 0 — not a Plaid Item, browser automation instead |
+| Fidelity | 401k | 1, if Compliance Center approval is granted; 0 otherwise |
+| Morgan Stanley/E-Trade | Stocks/RSUs | 1 (unconfirmed) |
+| **Total** | | **~2-3 of 10** once Fidelity's status resolves, well under budget |
 
 **Balance is the only Plaid product this project needs (decision D22, §16)**
 — confirmed via real Sandbox testing that it returns usable current-balance
@@ -447,10 +448,12 @@ product) were dropped from the client entirely.
   integration testing should happen against Plaid's Sandbox environment**
   (fake institutions, unlimited free relinking); only link real institutions
   in Production once the connector code is stable, to conserve the budget.
-- **Fidelity may require additional approval.** Plaid's docs flag Fidelity
-  (and Charles Schwab) as institutions that can need an extra access request
-  via the Compliance Center. Verify this during the spike rather than
-  assuming it works out of the box.
+- **Fidelity requires additional approval — confirmed, not just flagged in
+  Plaid's docs.** Real Production testing (D25) returned "no eligible
+  accounts" for a real Fidelity 401k. Plaid's docs' warning that Fidelity
+  (and Charles Schwab) can need an extra access request via the Compliance
+  Center matches this exactly. Next step is requesting that approval via
+  the Plaid dashboard, not a code change.
 
 **Access token persistence:** resolved in decision D2 (§16) — Plaid access
 tokens are stored in macOS Keychain, scoped and revocable independent of any
@@ -1295,3 +1298,40 @@ Previously open questions, now resolved:
   whenever D24 is fixed, any `dev_access_token` left in `sources.yaml`
   should be migrated into real Keychain storage and stripped back out —
   this was never meant to be permanent.
+- **D25 — Vanguard isn't reachable via Plaid at all; Fidelity needs
+  Compliance Center approval it doesn't have yet** (§7): confirmed via
+  real Production testing once task 25's "Connect via Plaid" flow
+  actually existed to test with. §7's original table assumed Plaid
+  could reach both, flagging Vanguard's 529 sub-account handling and
+  Fidelity's Compliance Center requirement as things to "verify during
+  the spike" — the verification happened, and the results were worse
+  than assumed for Vanguard specifically: not a nuance to work around,
+  a flat lack of support. Resolved: Vanguard moves to browser
+  automation (reactivating the fantoccini spike, §15 task 21, which now
+  has a concrete real target rather than being parked for lack of one);
+  Fidelity stays on Plaid pending Compliance Center approval requested
+  through Plaid's dashboard, with browser automation as the fallback if
+  that approval doesn't come through or doesn't unlock the account
+  data. Morgan Stanley/E-Trade's Plaid support remains unconfirmed
+  against real Production data — given two of three untested
+  institutions failed differently, it shouldn't be assumed to work
+  without testing either.
+- **D26 — `create_link_token`'s `products` must include `"liabilities"`
+  for credit card accounts to be included in the Item at all** (§7,
+  §14): discovered while linking a real Chase credit card (task 25) —
+  `products: ["auth"]` alone let the card show as *selectable* in
+  Plaid's Hosted Link UI, but the resulting Item silently excluded it;
+  two separate real Link sessions both produced an Item scoped to
+  checking only (confirmed by both resolving to the same `account_id`
+  via `/accounts/balance/get`), burning two Items to learn this rather
+  than one. Matches Plaid's own Link customization docs: "account types
+  and subtypes that are not compatible with the products used to
+  initialize Link will be automatically omitted." This is a distinct
+  concern from D22's decision never to *call* the dedicated Liabilities
+  detail endpoint (Balance alone still reads a liability account's
+  balance fine, once it's actually in the Item) — Liabilities as a
+  *Link-time eligibility product* is still needed, separately from
+  whether its own endpoint is ever used. Liabilities is normally a
+  per-Item billed product but waived under the Trial plan (D22, §7), so
+  requesting it at Link time doesn't reopen the cost question D22
+  settled.

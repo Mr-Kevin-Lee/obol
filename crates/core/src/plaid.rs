@@ -198,6 +198,22 @@ impl PlaidClient {
     /// API surface; `hosted_link_url` on the response is the part worth
     /// double-checking against a real response — see the module doc
     /// comment's confidence note.
+    ///
+    /// **`products` includes `"liabilities"` alongside `"auth"`**
+    /// (confirmed necessary via real Production testing, task 25):
+    /// "account types and subtypes that are not compatible with the
+    /// products used to initialize Link will be automatically omitted"
+    /// (Plaid's own Link customization docs) — a credit card account
+    /// showed as selectable in Plaid's Hosted Link UI with `products:
+    /// ["auth"]` alone, but the resulting Item silently excluded it
+    /// entirely; the Balance endpoint never even got a chance to read
+    /// it. This is a Link-time eligibility requirement, distinct from
+    /// D22's decision to never *call* the dedicated Liabilities detail
+    /// endpoint — Balance alone still covers reading a liability
+    /// account's balance once it's actually included in the Item.
+    /// Liabilities is normally a per-Item billed product but waived
+    /// under the Trial plan (D22, §7), so this doesn't reopen the cost
+    /// question D22 settled.
     pub async fn create_link_token(
         &self,
         client_user_id: &str,
@@ -221,7 +237,7 @@ impl PlaidClient {
             Req {
                 user: LinkUser { client_user_id },
                 client_name,
-                products: &["auth"],
+                products: &["auth", "liabilities"],
                 country_codes: &["US"],
                 language: "en",
                 hosted_link: serde_json::json!({}),
@@ -358,26 +374,26 @@ impl LinkSession {
     }
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct LinkSessionResults {
     #[serde(default)]
     pub item_add_results: Vec<ItemAddResult>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct ItemAddResult {
     pub public_token: String,
     pub institution: LinkInstitution,
     pub accounts: Vec<LinkAccount>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct LinkInstitution {
     pub institution_id: String,
     pub name: String,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct LinkAccount {
     pub id: String,
     pub name: String,
