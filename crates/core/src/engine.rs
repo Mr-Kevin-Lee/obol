@@ -206,15 +206,27 @@ enum CredentialResolution {
     PlaidKeychainUnavailable,
 }
 
-/// Dev/testing-only escape hatch for the parked Keychain signing bug
+/// Dev/testing-only escape hatches for the parked Keychain signing bug
 /// (D24) — mirrors the precedent already established for this app's own
-/// Plaid `client_id`/`secret` (D20): an env var is fine for verifying
-/// real behavior against a real Plaid Item, never how the shipped app
-/// holds this credential at rest. Applies to every Plaid source in this
-/// run alike (one Item's token can legitimately back several sources,
-/// D23), not per-source — this is a blunt bridge, not a real
-/// per-source credential store.
+/// Plaid `client_id`/`secret` (D20): fine for verifying real behavior
+/// against a real Plaid Item, never how the shipped app holds this
+/// credential at rest. Checked in order:
+///
+/// 1. `source.provider_config.dev_access_token` — a plaintext token
+///    sitting in `sources.yaml` itself, persisting across runs so
+///    multiple real institutions (each its own Item, its own token,
+///    D23) can be configured once rather than re-supplied every run.
+///    The most convenient option and the least secure one — a real,
+///    live credential at rest, unencrypted, for as long as it's there.
+/// 2. `PLAID_DEV_ACCESS_TOKEN` — one token for *every* Plaid source in
+///    the run alike, session-scoped (nothing written to disk). Kept
+///    for quick one-off testing against a single Item.
+///
+/// Whenever D24 is actually fixed, any `dev_access_token` left in
+/// `sources.yaml` should be migrated into real Keychain storage and
+/// stripped back out — this was never meant to be permanent.
 const DEV_ACCESS_TOKEN_ENV_VAR: &str = "PLAID_DEV_ACCESS_TOKEN";
+const DEV_ACCESS_TOKEN_CONFIG_KEY: &str = "dev_access_token";
 
 /// Plaid sources resolve their access token from Keychain directly and
 /// never prompt (§8). Every other source goes through the interactive
@@ -224,12 +236,21 @@ fn resolve_credentials(
     credential_source: &dyn CredentialSource,
 ) -> CredentialResolution {
     if source.provider == "plaid" {
-        if let Ok(token) = std::env::var(DEV_ACCESS_TOKEN_ENV_VAR) {
-            eprintln!(
-                "warning: source '{}' is using {DEV_ACCESS_TOKEN_ENV_VAR} \
-                 (dev/testing bridge, not real credential storage — see D24)",
-                source.id
+        if let Some(token) = source
+            .provider_config
+            .get(DEV_ACCESS_TOKEN_CONFIG_KEY)
+            .and_then(|v| v.as_str())
+        {
+            warn_dev_bridge_used(
+                &source.id,
+                "sources.yaml's provider_config.dev_access_token",
             );
+            return CredentialResolution::Resolved(Some(Credentials(secrecy::Secret::new(
+                token.to_string(),
+            ))));
+        }
+        if let Ok(token) = std::env::var(DEV_ACCESS_TOKEN_ENV_VAR) {
+            warn_dev_bridge_used(&source.id, DEV_ACCESS_TOKEN_ENV_VAR);
             return CredentialResolution::Resolved(Some(Credentials(secrecy::Secret::new(token))));
         }
         match crate::read_plaid_access_token(&source.id) {
@@ -239,6 +260,13 @@ fn resolve_credentials(
     } else {
         CredentialResolution::Resolved(credential_source.provide(source))
     }
+}
+
+fn warn_dev_bridge_used(source_id: &str, via: &str) {
+    eprintln!(
+        "warning: source '{source_id}' is using {via} (dev/testing bridge, \
+         not real credential storage — see D24)"
+    );
 }
 
 async fn fetch_one(
@@ -645,6 +673,48 @@ mod tests {
             calls.load(Ordering::SeqCst),
             1,
             "CredentialSource should be called once, for the non-Plaid source only"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_dev_access_token_in_provider_config_is_used_without_touching_keychain_or_env() {
+        // Assumes a clean local environment (no PLAID_DEV_ACCESS_TOKEN
+        // set) and no real Keychain entry for this made-up source id —
+        // same informal assumption the other Keychain-adjacent tests in
+        // this file already make. If resolve_credentials fell through
+        // to either of those instead of the per-source config value,
+        // this source would end up PlaidKeychainUnavailable, not a
+        // successful fetch.
+        let mut registry: HashMap<&'static str, ProviderFactory> = HashMap::new();
+        registry.insert(
+            "plaid",
+            counting_registry_entry(
+                Arc::new(AtomicUsize::new(0)),
+                Arc::new(AtomicUsize::new(0)),
+                Duration::ZERO,
+                FakeResult::Ok,
+            ),
+        );
+        let source = SourceConfig {
+            id: "chase_checking_with_dev_token".into(),
+            provider: "plaid".into(),
+            category: Category::Asset,
+            account_type: "checking".into(),
+            institution: "Chase".into(),
+            account_salt: "test-salt".into(),
+            provider_config: serde_json::json!({ "dev_access_token": "access-production-fake" }),
+        };
+        let credential_source = FakeCredentialSource {
+            calls: Arc::new(AtomicUsize::new(0)),
+        };
+
+        let snapshot = run(&[source], &registry, &credential_source).await;
+
+        assert_eq!(snapshot.accounts.len(), 1);
+        assert_eq!(
+            snapshot.accounts[0].status(),
+            Status::Ok,
+            "expected the per-source dev_access_token to resolve credentials successfully"
         );
     }
 
