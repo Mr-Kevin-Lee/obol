@@ -1,4 +1,5 @@
-use crate::account::{Account, AccountStatus};
+use crate::account::{Account, AccountStatus, Asset, Liability};
+use crate::snapshot::{AccountRecord, Category, Status};
 
 /// Net worth for one run (spec §12).
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -36,6 +37,60 @@ where
     }
 
     NetWorth::Computed(ok_contributions.iter().sum())
+}
+
+/// Computes net worth over a **loaded/fetched `Snapshot`'s**
+/// `AccountRecord`s (spec §12) — the counterpart to [`calculate_net_worth`]
+/// for the storage-DTO shape rather than live `Box<dyn Account>` fetch
+/// results. These two shapes exist for good reason (§11's domain/storage
+/// split), but net worth's sign rule — positive for assets, negative for
+/// liabilities — must still live in exactly one place (D11). Rather than
+/// re-deriving that rule here a second time, each record is adapted into
+/// a throwaway `Asset`/`Liability` value and run through
+/// `Account::net_worth_contribution()`, the same as a live fetch would.
+pub fn calculate_net_worth_from_records(records: &[AccountRecord]) -> NetWorth {
+    let accounts: Vec<Box<dyn Account>> = records.iter().map(record_to_account).collect();
+    calculate_net_worth(accounts.iter().map(|a| a.as_ref()))
+}
+
+fn record_to_account(record: &AccountRecord) -> Box<dyn Account> {
+    let status = match record.status() {
+        Status::Ok => AccountStatus::Ok,
+        Status::Error | Status::Unknown => AccountStatus::Error {
+            message: record
+                .error_message()
+                .unwrap_or("unknown error")
+                .to_string(),
+        },
+    };
+    let account_key = record.account_key().to_string();
+    let institution = record.institution().to_string();
+    let r#type = record.account_type().to_string();
+    let balance = record.balance();
+
+    match record.category() {
+        Category::Liability => Box::new(Liability {
+            account_key,
+            institution,
+            r#type,
+            balance,
+            status,
+        }),
+        // An `Unknown` category (D14's forward-compat fallback) has no
+        // sign-correct treatment available — arbitrarily but
+        // consistently defaulting to the Asset side rather than
+        // silently dropping it from the total. A newer schema
+        // introducing a category this build doesn't understand yet is
+        // an edge case a v1 net worth figure can't get perfectly right
+        // either way.
+        Category::Asset | Category::Unknown => Box::new(Asset {
+            account_key,
+            institution,
+            r#type,
+            balance,
+            status,
+        }),
+    }
 }
 
 #[cfg(test)]
@@ -116,5 +171,102 @@ mod tests {
         let asset = ok_asset(250.0);
         let accounts: Vec<&dyn Account> = vec![&asset];
         assert_eq!(calculate_net_worth(accounts), NetWorth::Computed(250.0));
+    }
+
+    fn ok_record(category: Category, balance: f64) -> AccountRecord {
+        AccountRecord {
+            account_key: "sha256:test".into(),
+            source_id: "chase_checking".into(),
+            institution: "Chase".into(),
+            category,
+            account_type: "checking".into(),
+            balance: Some(balance),
+            currency: "USD".into(),
+            status: Status::Ok,
+            error_message: None,
+        }
+    }
+
+    fn errored_record(category: Category) -> AccountRecord {
+        AccountRecord {
+            account_key: "sha256:test".into(),
+            source_id: "chase_checking".into(),
+            institution: "Chase".into(),
+            category,
+            account_type: "checking".into(),
+            balance: None,
+            currency: "USD".into(),
+            status: Status::Error,
+            error_message: Some("timeout".into()),
+        }
+    }
+
+    #[test]
+    fn from_records_mixed_assets_and_liabilities_nets_correctly() {
+        let records = vec![
+            ok_record(Category::Asset, 5000.0),
+            ok_record(Category::Liability, 1200.0),
+        ];
+        assert_eq!(
+            calculate_net_worth_from_records(&records),
+            NetWorth::Computed(3800.0)
+        );
+    }
+
+    #[test]
+    fn from_records_excludes_failed_accounts_from_the_sum() {
+        let records = vec![
+            ok_record(Category::Asset, 1000.0),
+            errored_record(Category::Asset),
+        ];
+        assert_eq!(
+            calculate_net_worth_from_records(&records),
+            NetWorth::Computed(1000.0)
+        );
+    }
+
+    #[test]
+    fn from_records_all_failed_returns_unavailable() {
+        let records = vec![
+            errored_record(Category::Asset),
+            errored_record(Category::Liability),
+        ];
+        assert_eq!(
+            calculate_net_worth_from_records(&records),
+            NetWorth::Unavailable { total_sources: 2 }
+        );
+    }
+
+    #[test]
+    fn from_records_empty_returns_unavailable() {
+        assert_eq!(
+            calculate_net_worth_from_records(&[]),
+            NetWorth::Unavailable { total_sources: 0 }
+        );
+    }
+
+    #[test]
+    fn from_records_unknown_category_is_treated_as_a_positive_contribution() {
+        let records = vec![ok_record(Category::Unknown, 100.0)];
+        assert_eq!(
+            calculate_net_worth_from_records(&records),
+            NetWorth::Computed(100.0)
+        );
+    }
+
+    #[test]
+    fn from_records_matches_calculate_net_worth_for_the_same_data() {
+        let asset = ok_asset(5000.0);
+        let liability = ok_liability(1200.0);
+        let accounts: Vec<&dyn Account> = vec![&asset, &liability];
+        let via_accounts = calculate_net_worth(accounts);
+
+        let records = vec![
+            ok_record(Category::Asset, 5000.0),
+            ok_record(Category::Liability, 1200.0),
+        ];
+        let via_records = calculate_net_worth_from_records(&records);
+
+        assert_eq!(via_accounts, via_records);
     }
 }

@@ -1,3 +1,4 @@
+mod dashboard;
 mod mode;
 
 use std::path::PathBuf;
@@ -5,6 +6,20 @@ use std::path::PathBuf;
 use clap::{Parser, Subcommand};
 
 use mode::{determine_mode, Mode, RequestedCommand};
+use obol_core::{CredentialSource, Credentials, SourceConfig};
+
+/// No interactive `Provider` (webdriver, manual entry) is registered
+/// yet (tasks 15+) — this is a placeholder that always declines, to be
+/// replaced with a real masked-terminal-prompt implementation once one
+/// exists. Plaid sources never reach this at all (§8, resolved from
+/// Keychain internally by the engine).
+struct NoInteractiveProvidersYet;
+
+impl CredentialSource for NoInteractiveProvidersYet {
+    fn provide(&self, _source: &SourceConfig) -> Option<Credentials> {
+        None
+    }
+}
 
 #[derive(Parser)]
 #[command(
@@ -53,14 +68,30 @@ async fn main() {
         }
     };
 
-    // Real screens/fetching land in later tasks (23–26) — this is
-    // deliberately still just the dispatch skeleton (task 22's scope).
+    // Sources screen (task 24) and headless snapshot wiring still just
+    // placeholders below — Dashboard (task 23) is the first branch
+    // wired to the real engine.
     match determine_mode(sources.is_empty(), requested) {
         Mode::FirstRunSources => {
             println!("No sources configured yet — Sources screen goes here (task 24).");
         }
         Mode::Dashboard => {
-            println!("Dashboard goes here (task 23).");
+            let registry = obol_core::provider_registry();
+            let credential_source = NoInteractiveProvidersYet;
+            let snapshots_dir = storage_dir.join("snapshots");
+
+            let result =
+                obol_core::run_and_save(&sources, &registry, &credential_source, &snapshots_dir)
+                    .await;
+            if let Some(err) = &result.save_error {
+                // §9.1: best-effort persistence — a save failure never
+                // blocks rendering what was just fetched.
+                eprintln!("warning: this run's data was not saved to history: {err}");
+            }
+            if let Err(err) = dashboard::run(&result.snapshot) {
+                eprintln!("dashboard rendering failed: {err}");
+                std::process::exit(1);
+            }
         }
         Mode::Sources => {
             println!("Sources screen goes here (task 24).");

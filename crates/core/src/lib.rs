@@ -24,7 +24,7 @@ pub use keychain::{
 };
 pub use lock::{acquire_with_timeout, FileLock, LockError};
 pub use migration::{load_snapshot_json, LoadedSnapshot, MigrationError, CURRENT_SCHEMA_VERSION};
-pub use networth::{calculate_net_worth, NetWorth};
+pub use networth::{calculate_net_worth, calculate_net_worth_from_records, NetWorth};
 pub use pii::{scrub, RawAccountData};
 pub use plaid::{
     BalanceResponse, CreateLinkTokenResponse, ExchangeResponse, ItemAddResult, LinkAccount,

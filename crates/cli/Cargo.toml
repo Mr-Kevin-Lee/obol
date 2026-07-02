@@ -11,3 +11,5 @@ path = "src/main.rs"
 obol-core = { path = "../core" }
 clap = { version = "4", features = ["derive"] }
 tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
+ratatui = "0.29"
+crossterm = "0.28"
