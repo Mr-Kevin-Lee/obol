@@ -12,6 +12,7 @@ mod provider;
 mod retry;
 mod snapshot;
 mod sources;
+mod storage;
 
 pub use account::{Account, AccountStatus, Asset, Liability};
 pub use item_usage::{ItemUsageCounter, PLAID_ITEM_LIMIT, PLAID_ITEM_WARNING_THRESHOLD};
@@ -37,3 +38,4 @@ pub use provider::{
 pub use retry::{with_retry, RetryConfig, RetryableError};
 pub use snapshot::{AccountRecord, Category, Snapshot, Status};
 pub use sources::{add_source, edit_source, load_or_init, remove_source, SourcesError};
+pub use storage::{load_recent_snapshots, load_snapshot, save_snapshot, StorageError};
