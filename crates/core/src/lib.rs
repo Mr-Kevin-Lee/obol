@@ -16,7 +16,7 @@ mod sources;
 mod storage;
 
 pub use account::{Account, AccountStatus, Asset, Liability};
-pub use engine::{run, CredentialSource};
+pub use engine::{run, run_and_save, CredentialSource, RunAndSaveResult};
 pub use item_usage::{ItemUsageCounter, PLAID_ITEM_LIMIT, PLAID_ITEM_WARNING_THRESHOLD};
 pub use keychain::{
     delete_plaid_access_token, read_plaid_access_token, read_plaid_app_credentials,

@@ -30,8 +30,17 @@
 //! (FR10, a stretch goal not in v1 scope) for a source that flips
 //! between erroring and succeeding across runs — not a correctness
 //! issue for any v1 requirement.
+//!
+//! **§9.1 failure-mode wiring** also lives here: a Plaid source whose
+//! Keychain read fails gets a specific "reconnect this source" message
+//! rather than being routed through `PlaidProvider` (which can't tell a
+//! Keychain failure apart from any other reason it got no credentials),
+//! and [`run_and_save`] guarantees a save failure never discards the
+//! snapshot that was just fetched (best-effort, not blocking,
+//! persistence).
 
 use std::collections::HashMap;
+use std::path::Path;
 use std::sync::Arc;
 
 use rand::Rng;
@@ -41,8 +50,16 @@ use crate::pii::hash_account_number;
 use crate::provider::{Credentials, Provider, ProviderError, ProviderFactory, SourceConfig};
 use crate::retry::{with_retry, RetryConfig, RetryableError};
 use crate::snapshot::{AccountRecord, Snapshot, Status};
+use crate::storage::StorageError;
 
 const CURRENCY: &str = "USD";
+
+/// §9.1: "a Plaid Keychain read failure is treated as a relink signal,
+/// not a generic error" — this exact wording is what points the user at
+/// the Sources screen's existing Reconnect flow, rather than a generic
+/// auth-failure message that doesn't say what to do about it.
+const PLAID_RECONNECT_MESSAGE: &str =
+    "Plaid access token could not be read from Keychain — reconnect this source from the Sources screen";
 
 /// Interactive credential prompting, threaded through core without
 /// giving core a UI-crate dependency (spec §6.2, decision D12). Called
@@ -77,9 +94,20 @@ pub async fn run(
 
     let mut join_set = tokio::task::JoinSet::new();
     for source in sources.iter().cloned() {
-        let provider = providers.get(&source.provider).cloned();
-        let credentials = resolve_credentials(&source, credential_source);
-        join_set.spawn(fetch_one(source, provider, credentials));
+        match resolve_credentials(&source, credential_source) {
+            CredentialResolution::PlaidKeychainUnavailable => {
+                // §9.1: treated as a relink signal, not routed through
+                // fetch_one/PlaidProvider at all — that would only ever
+                // produce a generic "no access token" auth error, not
+                // this specific, actionable message.
+                let record = error_record(&source, PLAID_RECONNECT_MESSAGE.to_string());
+                join_set.spawn(async move { vec![record] });
+            }
+            CredentialResolution::Resolved(credentials) => {
+                let provider = providers.get(&source.provider).cloned();
+                join_set.spawn(fetch_one(source, provider, credentials));
+            }
+        }
     }
 
     let mut accounts = Vec::new();
@@ -100,23 +128,61 @@ pub async fn run(
     }
 }
 
+/// The outcome of [`run_and_save`] — `snapshot` is always the freshly
+/// fetched data, regardless of whether persisting it succeeded.
+pub struct RunAndSaveResult {
+    pub snapshot: Snapshot,
+    /// `Some` if `storage::save_snapshot` failed (§9.1: "best-effort,
+    /// not blocking" persistence — disk full, permissions, unexpected
+    /// I/O). The caller (CLI/TUI) still renders `snapshot`, but should
+    /// surface this as a clear "this run's data was not written to
+    /// history" warning rather than silently dropping it.
+    pub save_error: Option<StorageError>,
+}
+
+/// Runs a snapshot pass and attempts to save it (spec §6.2 steps 2–3),
+/// but never lets a save failure discard the snapshot that was just
+/// fetched — the whole point of §9.1's best-effort persistence
+/// guarantee. Whatever `run()` produced is always returned; a save
+/// failure only ever shows up in `save_error`.
+pub async fn run_and_save(
+    sources: &[SourceConfig],
+    registry: &HashMap<&'static str, ProviderFactory>,
+    credential_source: &dyn CredentialSource,
+    storage_dir: &Path,
+) -> RunAndSaveResult {
+    let snapshot = run(sources, registry, credential_source).await;
+    let save_error = crate::save_snapshot(storage_dir, &snapshot).err();
+    RunAndSaveResult {
+        snapshot,
+        save_error,
+    }
+}
+
+enum CredentialResolution {
+    Resolved(Option<Credentials>),
+    /// Specifically a Plaid source whose Keychain read failed (§9.1) —
+    /// kept distinct from `Resolved(None)` so `run()` can short-circuit
+    /// straight to the reconnect-signal error record instead of routing
+    /// through `PlaidProvider`, which has no way to tell "Keychain read
+    /// failed" apart from any other reason it got no credentials.
+    PlaidKeychainUnavailable,
+}
+
 /// Plaid sources resolve their access token from Keychain directly and
-/// never prompt (§8) — a missing/unreadable entry becomes `None`
-/// credentials, which `PlaidProvider::fetch` already turns into an
-/// `Auth` error, producing a normal per-source error record. (Task 14
-/// refines this into a more specific "reconnect" message per §9.1; this
-/// baseline already isolates the failure correctly.) Every other source
-/// goes through the interactive `CredentialSource` callback.
+/// never prompt (§8). Every other source goes through the interactive
+/// `CredentialSource` callback.
 fn resolve_credentials(
     source: &SourceConfig,
     credential_source: &dyn CredentialSource,
-) -> Option<Credentials> {
+) -> CredentialResolution {
     if source.provider == "plaid" {
-        crate::read_plaid_access_token(&source.id)
-            .ok()
-            .map(Credentials)
+        match crate::read_plaid_access_token(&source.id) {
+            Ok(token) => CredentialResolution::Resolved(Some(Credentials(token))),
+            Err(_) => CredentialResolution::PlaidKeychainUnavailable,
+        }
     } else {
-        credential_source.provide(source)
+        CredentialResolution::Resolved(credential_source.provide(source))
     }
 }
 
@@ -552,5 +618,76 @@ mod tests {
         let second = run(&[], &registry, &credential_source).await;
 
         assert_ne!(first.snapshot_id, second.snapshot_id);
+    }
+
+    #[tokio::test]
+    async fn a_plaid_keychain_read_failure_produces_a_reconnect_message_not_a_generic_one() {
+        // Same "no real entry for this made-up id" mechanism as the
+        // callback test above — a real, fast, read-only Keychain miss,
+        // not something requiring a signed binary (D24).
+        let registry: HashMap<&'static str, ProviderFactory> = HashMap::new();
+        let sources = vec![fake_source(
+            "plaid_source_never_linked",
+            "plaid",
+            Category::Asset,
+        )];
+        let credential_source = FakeCredentialSource {
+            calls: Arc::new(AtomicUsize::new(0)),
+        };
+
+        let snapshot = run(&sources, &registry, &credential_source).await;
+
+        assert_eq!(snapshot.accounts.len(), 1);
+        let record = &snapshot.accounts[0];
+        assert_eq!(record.status(), Status::Error);
+        let message = record.error_message().unwrap();
+        assert!(
+            message.contains("reconnect"),
+            "expected a reconnect-signal message, got: {message}"
+        );
+        assert!(
+            !message.contains("no access token"),
+            "should not fall through to PlaidProvider's generic auth message: {message}"
+        );
+    }
+
+    #[tokio::test]
+    async fn run_and_save_returns_the_snapshot_even_when_saving_fails() {
+        // A path whose parent component is an existing *file*, not a
+        // directory, so create_dir_all inside save_snapshot fails —
+        // simulates the disk-full/permissions class of failure §9.1
+        // describes without needing real disk exhaustion.
+        let blocking_file = std::env::temp_dir().join(format!(
+            "obol-engine-test-run-and-save-blocker-{}",
+            std::process::id()
+        ));
+        std::fs::write(&blocking_file, "not a directory").unwrap();
+        let unwritable_dir = blocking_file.join("snapshots");
+
+        let mut registry: HashMap<&'static str, ProviderFactory> = HashMap::new();
+        registry.insert(
+            "fake",
+            counting_registry_entry(
+                Arc::new(AtomicUsize::new(0)),
+                Arc::new(AtomicUsize::new(0)),
+                Duration::ZERO,
+                FakeResult::Ok,
+            ),
+        );
+        let sources = vec![fake_source("chase_checking", "fake", Category::Asset)];
+        let credential_source = FakeCredentialSource {
+            calls: Arc::new(AtomicUsize::new(0)),
+        };
+
+        let result = run_and_save(&sources, &registry, &credential_source, &unwritable_dir).await;
+
+        assert_eq!(
+            result.snapshot.accounts.len(),
+            1,
+            "the fetched snapshot must still be returned even though saving failed"
+        );
+        assert!(result.save_error.is_some());
+
+        std::fs::remove_file(&blocking_file).ok();
     }
 }
