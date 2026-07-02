@@ -89,16 +89,23 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let exchange = client.exchange_public_token(public_token).await?;
         println!(
             "Exchanged for access_token (item_id: {}). Not persisted anywhere by this \
-             spike — Keychain storage is task 17, not wired in yet.",
-            exchange.item_id
+             spike — Keychain storage is task 17, not wired in yet.\n\
+             access_token: {}\n\
+             (shown only once — Plaid doesn't let you retrieve it again after exchange, \
+             so copy it now if you need it, e.g. for PLAID_DEV_ACCESS_TOKEN)",
+            exchange.item_id, exchange.access_token
         );
 
         println!("\nFetching balances to confirm the whole loop works end to end...");
         let balances = client.get_balances(&exchange.access_token).await?;
         for account in &balances.accounts {
             println!(
-                "  {} ({:?}): current={:?} available={:?}",
-                account.name, account.subtype, account.balances.current, account.balances.available
+                "  {} ({:?}): current={:?} available={:?}  account_id={}",
+                account.name,
+                account.subtype,
+                account.balances.current,
+                account.balances.available,
+                account.account_id
             );
         }
 

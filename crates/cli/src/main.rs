@@ -23,6 +23,42 @@ impl CredentialSource for NoInteractiveProvidersYet {
     }
 }
 
+/// Dev/testing-only wiring (see spec.md D24's addendum) — registers a
+/// real `PlaidProvider` if `PLAID_CLIENT_ID`/`PLAID_SECRET` are set in
+/// the environment, mirroring the same env-var convention used
+/// elsewhere for these credentials (D20). No-op (registry stays empty
+/// for "plaid") if they're not set. `PLAID_ENVIRONMENT=production`
+/// opts into real Production; anything else (including unset) stays on
+/// Sandbox, matching the project's "test against Sandbox first"
+/// discipline (§7).
+fn maybe_register_plaid(
+    registry: &mut std::collections::HashMap<&'static str, obol_core::ProviderFactory>,
+) {
+    let (Ok(client_id), Ok(secret)) = (
+        std::env::var("PLAID_CLIENT_ID"),
+        std::env::var("PLAID_SECRET"),
+    ) else {
+        return;
+    };
+    let environment = if std::env::var("PLAID_ENVIRONMENT").as_deref() == Ok("production") {
+        obol_core::PlaidEnvironment::Production
+    } else {
+        obol_core::PlaidEnvironment::Sandbox
+    };
+
+    registry.insert(
+        "plaid",
+        Box::new(move || {
+            let client = obol_core::PlaidClient::new(obol_core::PlaidConfig {
+                client_id: client_id.clone(),
+                secret: secrecy::Secret::new(secret.clone()),
+                environment: environment.clone(),
+            });
+            Box::new(obol_core::PlaidProvider::new(client)) as Box<dyn obol_core::Provider>
+        }),
+    );
+}
+
 #[derive(Parser)]
 #[command(
     name = "obol",
@@ -82,7 +118,8 @@ async fn main() {
             }
         }
         Mode::Dashboard => {
-            let registry = obol_core::provider_registry();
+            let mut registry = obol_core::provider_registry();
+            maybe_register_plaid(&mut registry);
             let credential_source = NoInteractiveProvidersYet;
 
             let result =

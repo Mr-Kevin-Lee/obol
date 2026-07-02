@@ -169,6 +169,16 @@ enum CredentialResolution {
     PlaidKeychainUnavailable,
 }
 
+/// Dev/testing-only escape hatch for the parked Keychain signing bug
+/// (D24) — mirrors the precedent already established for this app's own
+/// Plaid `client_id`/`secret` (D20): an env var is fine for verifying
+/// real behavior against a real Plaid Item, never how the shipped app
+/// holds this credential at rest. Applies to every Plaid source in this
+/// run alike (one Item's token can legitimately back several sources,
+/// D23), not per-source — this is a blunt bridge, not a real
+/// per-source credential store.
+const DEV_ACCESS_TOKEN_ENV_VAR: &str = "PLAID_DEV_ACCESS_TOKEN";
+
 /// Plaid sources resolve their access token from Keychain directly and
 /// never prompt (§8). Every other source goes through the interactive
 /// `CredentialSource` callback.
@@ -177,6 +187,14 @@ fn resolve_credentials(
     credential_source: &dyn CredentialSource,
 ) -> CredentialResolution {
     if source.provider == "plaid" {
+        if let Ok(token) = std::env::var(DEV_ACCESS_TOKEN_ENV_VAR) {
+            eprintln!(
+                "warning: source '{}' is using {DEV_ACCESS_TOKEN_ENV_VAR} \
+                 (dev/testing bridge, not real credential storage — see D24)",
+                source.id
+            );
+            return CredentialResolution::Resolved(Some(Credentials(secrecy::Secret::new(token))));
+        }
         match crate::read_plaid_access_token(&source.id) {
             Ok(token) => CredentialResolution::Resolved(Some(Credentials(token))),
             Err(_) => CredentialResolution::PlaidKeychainUnavailable,

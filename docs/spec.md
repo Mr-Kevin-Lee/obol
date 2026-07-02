@@ -1270,3 +1270,17 @@ Previously open questions, now resolved:
   (exchange → store-per-account → increment-once → write sources) is
   implemented and unit-tested apart from the real Keychain write, which
   remains an `#[ignore]`d, currently-failing test.
+
+  **Dev/testing bridge added while D24 stays open:** `engine.rs`'s
+  `resolve_credentials` checks a `PLAID_DEV_ACCESS_TOKEN` env var before
+  falling back to Keychain, mirroring the precedent already established
+  for this app's own Plaid `client_id`/`secret` (D20) — an env var is
+  fine for verifying real behavior against a real Plaid Item (Sandbox or
+  Production), never how the shipped app holds this credential at rest.
+  Prints a warning to stderr whenever it's used, applies to every Plaid
+  source in the run alike (not per-source — one Item's token can
+  legitimately back several sources, D23), and nothing persists between
+  runs (you re-link/re-export each time). This unblocks seeing real
+  account data flow through the pipeline without waiting on D24, but
+  doesn't replace it — the real "link once, every future run just
+  works" experience still needs a working persistent, secure store.
