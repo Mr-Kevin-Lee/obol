@@ -117,7 +117,19 @@ pub async fn run(
         // it maps it to an error record), not a per-source condition to
         // isolate, so it's allowed to propagate rather than being
         // swallowed into a fabricated record.
-        accounts.extend(result.expect("a snapshot fetch task panicked"));
+        //
+        // Every record gets audit-logged right here — the one place
+        // every path through fetch_one and the Keychain short-circuit
+        // above both funnel through, so this can't be missed by adding
+        // a new failure path later. §4's audit requirement is
+        // deliberately narrow: timestamp + source_id + ok/error, never
+        // a balance or account_key (source_id is a locally-chosen
+        // label, not tied to the real account at all).
+        let records = result.expect("a snapshot fetch task panicked");
+        for record in &records {
+            log_outcome(record);
+        }
+        accounts.extend(records);
     }
 
     Snapshot {
@@ -125,6 +137,31 @@ pub async fn run(
         snapshot_id: generate_snapshot_id(),
         created_at: now_rfc3339(),
         accounts,
+    }
+}
+
+/// Logs one source's outcome for the audit trail (spec §4: "timestamp,
+/// which sources succeeded/failed — no balances, no identifiers... so
+/// connection health is visible over time without the log itself
+/// becoming a sensitive artifact"). `tracing` events already carry a
+/// timestamp; `source_id` is the local, user-chosen label from
+/// `sources.yaml` (e.g. `"chase_checking"`), never the real account
+/// number or the salted `account_key`. Deliberately never passes
+/// `record.balance()` or `record.account_key()` to a `tracing` macro —
+/// that omission is the actual security property this function exists
+/// to enforce, verified by this module's own audit-log test.
+fn log_outcome(record: &AccountRecord) {
+    match record.status() {
+        Status::Ok => {
+            tracing::info!(source_id = %record.source_id(), "source fetch succeeded");
+        }
+        Status::Error | Status::Unknown => {
+            tracing::warn!(
+                source_id = %record.source_id(),
+                error = %record.error_message().unwrap_or("unknown error"),
+                "source fetch failed"
+            );
+        }
     }
 }
 
@@ -707,5 +744,77 @@ mod tests {
         assert!(result.save_error.is_some());
 
         std::fs::remove_file(&blocking_file).ok();
+    }
+
+    /// Spec §4: audit log output must never contain a balance or
+    /// account_key, only timestamp + source_id + ok/error. Tests
+    /// `log_outcome` directly and synchronously (a plain `#[test]`, not
+    /// `#[tokio::test]`) — it runs in `run()`'s own task, never inside
+    /// a `JoinSet`-spawned one, so there's no async/threading machinery
+    /// actually relevant here to route around.
+    #[test]
+    fn audit_log_never_contains_a_balance_or_account_key() {
+        let captured = Arc::new(std::sync::Mutex::new(Vec::<u8>::new()));
+
+        #[derive(Clone)]
+        struct VecWriter(Arc<std::sync::Mutex<Vec<u8>>>);
+        impl std::io::Write for VecWriter {
+            fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+                self.0.lock().unwrap().extend_from_slice(buf);
+                Ok(buf.len())
+            }
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+
+        let writer = VecWriter(captured.clone());
+        let subscriber = tracing_subscriber::fmt()
+            .with_writer(move || writer.clone())
+            .with_ansi(false)
+            .finish();
+
+        let ok_record = AccountRecord {
+            account_key: "sha256:should-never-appear-in-logs".into(),
+            source_id: "ok_source".into(),
+            institution: "Fake Bank".into(),
+            category: Category::Asset,
+            account_type: "checking".into(),
+            balance: Some(918_273.45),
+            currency: "USD".into(),
+            status: Status::Ok,
+            error_message: None,
+        };
+        let bad_record = AccountRecord {
+            account_key: "sha256:should-also-never-appear".into(),
+            source_id: "bad_source".into(),
+            institution: "Fake Bank".into(),
+            category: Category::Asset,
+            account_type: "checking".into(),
+            balance: None,
+            currency: "USD".into(),
+            status: Status::Error,
+            error_message: Some("timeout".into()),
+        };
+
+        tracing::subscriber::with_default(subscriber, || {
+            log_outcome(&ok_record);
+            log_outcome(&bad_record);
+        });
+
+        let output = String::from_utf8(captured.lock().unwrap().clone()).unwrap();
+        assert!(
+            !output.contains("918273.45") && !output.contains("918_273.45"),
+            "audit log must never contain a balance, got:\n{output}"
+        );
+        assert!(
+            !output.contains("should-never-appear-in-logs")
+                && !output.contains("should-also-never-appear"),
+            "audit log must never contain an account_key, got:\n{output}"
+        );
+        assert!(
+            output.contains("ok_source") && output.contains("bad_source"),
+            "audit log should still contain the (non-sensitive) source_id, got:\n{output}"
+        );
     }
 }

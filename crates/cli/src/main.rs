@@ -85,6 +85,34 @@ fn storage_dir() -> PathBuf {
     PathBuf::from(home).join("Library/Application Support/obol")
 }
 
+/// Wires `core::engine`'s audit events (§4, task 26) to a local file —
+/// core only ever emits `tracing` events, never decides where they go
+/// (§6.1: no UI/presentation concerns in core); this is that decision,
+/// made once per interface. `0600`, same protection as every other file
+/// in the storage directory (§4). Silently does nothing if the file
+/// can't be opened (e.g. read-only filesystem) — a missing audit log is
+/// a degraded-but-survivable condition, not one worth crashing over.
+fn init_audit_log(storage_dir: &std::path::Path) {
+    let _ = std::fs::create_dir_all(storage_dir);
+    let log_path = storage_dir.join("audit.log");
+    let Ok(file) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&log_path)
+    else {
+        return;
+    };
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(&log_path, std::fs::Permissions::from_mode(0o600));
+    }
+    let _ = tracing_subscriber::fmt()
+        .with_writer(std::sync::Mutex::new(file))
+        .with_ansi(false)
+        .try_init();
+}
+
 #[tokio::main]
 async fn main() {
     let cli = Cli::parse();
@@ -95,6 +123,7 @@ async fn main() {
     };
 
     let storage_dir = storage_dir();
+    init_audit_log(&storage_dir);
     let sources_path = storage_dir.join("sources.yaml");
     let item_usage_path = storage_dir.join("item_usage.json");
     let snapshots_dir = storage_dir.join("snapshots");
