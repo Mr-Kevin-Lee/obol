@@ -208,11 +208,18 @@ fn health_for(source: &SourceConfig, recent: &[Snapshot]) -> String {
 }
 
 fn add_flow(terminal: &mut Term, sources_path: &Path, existing: &[SourceConfig]) -> io::Result<()> {
-    let Some(input) = gather_form_input(terminal, &SourceFormInput::default())? else {
+    let existing_ids: Vec<String> = existing.iter().map(|s| s.id.clone()).collect();
+    let Some(input) =
+        gather_form_input(terminal, &SourceFormInput::default(), &existing_ids, None)?
+    else {
         return Ok(());
     };
 
-    let existing_ids: Vec<String> = existing.iter().map(|s| s.id.clone()).collect();
+    // Each field was already validated as it was entered
+    // (gather_form_input) — this is a final defense-in-depth check
+    // right before writing, in case sources.yaml changed underneath us
+    // (e.g. no cross-process lock is wired into the CLI yet), not
+    // something a well-behaved single session should ever actually hit.
     let errors = form::validate(&input, &existing_ids, None);
     if !errors.is_empty() {
         return show_message(
@@ -247,11 +254,12 @@ fn edit_flow(
             .map(|s| s.to_string()),
     };
 
-    let Some(input) = gather_form_input(terminal, &initial)? else {
+    let existing_ids: Vec<String> = existing.iter().map(|s| s.id.clone()).collect();
+    let Some(input) = gather_form_input(terminal, &initial, &existing_ids, Some(&source.id))?
+    else {
         return Ok(());
     };
 
-    let existing_ids: Vec<String> = existing.iter().map(|s| s.id.clone()).collect();
     let errors = form::validate(&input, &existing_ids, Some(&source.id));
     if !errors.is_empty() {
         return show_message(
@@ -285,41 +293,121 @@ fn remove_flow(terminal: &mut Term, sources_path: &Path, source: &SourceConfig) 
     Ok(())
 }
 
+/// Internal provider names aren't meaningful to a user, and free-text
+/// entry for a fixed set of choices just invites typos — both provider
+/// and category are picked from a list instead (`select_prompt`), not
+/// typed.
+const PROVIDER_OPTIONS: &[(&str, &str)] = &[
+    (
+        "manual_entry",
+        "Manual entry — you type the balance in yourself each run",
+    ),
+    (
+        "webdriver",
+        "Browser automation — logs in to a bank website for you",
+    ),
+];
+
+const CATEGORY_OPTIONS: &[(&str, &str)] = &[
+    (
+        "asset",
+        "Asset — checking, savings, investment, retirement, etc.",
+    ),
+    ("liability", "Liability — credit card, loan, mortgage, etc."),
+];
+
 /// Sequentially prompts for every field a generic source needs,
 /// `Esc`-cancelable at any point (returns `None` if the user backs out
-/// partway through). `webdriver`'s extra `login_url` field is only
-/// prompted for once the provider field itself has been entered as
-/// `"webdriver"`.
+/// partway through). Each field is validated as it's entered
+/// (`prompt_line_validated`) — an invalid value re-prompts *that* field
+/// only, with what was typed still there to fix, rather than discarding
+/// the whole form. `webdriver`'s extra `login_url` field is only
+/// prompted for once the provider has been picked as `"webdriver"`.
 fn gather_form_input(
     terminal: &mut Term,
     initial: &SourceFormInput,
+    existing_ids: &[String],
+    editing_id: Option<&str>,
 ) -> io::Result<Option<SourceFormInput>> {
-    let Some(id) = prompt_line(terminal, "id", &initial.id)? else {
-        return Ok(None);
-    };
-    let Some(provider) = prompt_line(
+    let Some(id) = prompt_line_validated(
         terminal,
-        "provider (manual_entry/webdriver)",
-        &initial.provider,
+        "short internal name (e.g. chase_checking, no spaces)",
+        &initial.id,
+        |value| {
+            if value.trim().is_empty() {
+                return Err("must not be empty".to_string());
+            }
+            if editing_id != Some(value) && existing_ids.iter().any(|id| id == value) {
+                return Err(format!("a source with id '{value}' already exists"));
+            }
+            Ok(())
+        },
     )?
     else {
         return Ok(None);
     };
-    let Some(category) = prompt_line(terminal, "category (asset/liability)", &initial.category)?
+
+    let provider_index = PROVIDER_OPTIONS
+        .iter()
+        .position(|(value, _)| *value == initial.provider)
+        .unwrap_or(0);
+    let Some(provider) = select_prompt(terminal, "provider", PROVIDER_OPTIONS, provider_index)?
     else {
         return Ok(None);
     };
-    let Some(account_type) = prompt_line(terminal, "type", &initial.account_type)? else {
+
+    let category_index = CATEGORY_OPTIONS
+        .iter()
+        .position(|(value, _)| *value == initial.category)
+        .unwrap_or(0);
+    let Some(category) = select_prompt(terminal, "category", CATEGORY_OPTIONS, category_index)?
+    else {
         return Ok(None);
     };
-    let Some(institution) = prompt_line(terminal, "institution", &initial.institution)? else {
+
+    let type_label = if category == "liability" {
+        "account type (e.g. credit_card, mortgage, student_loan)"
+    } else {
+        "account type (e.g. checking, savings, brokerage, retirement_401k)"
+    };
+    let Some(account_type) =
+        prompt_line_validated(terminal, type_label, &initial.account_type, |value| {
+            if value.trim().is_empty() {
+                Err("must not be empty".to_string())
+            } else {
+                Ok(())
+            }
+        })?
+    else {
+        return Ok(None);
+    };
+    let Some(institution) = prompt_line_validated(
+        terminal,
+        "institution (e.g. Chase, Vanguard)",
+        &initial.institution,
+        |value| {
+            if value.trim().is_empty() {
+                Err("must not be empty".to_string())
+            } else {
+                Ok(())
+            }
+        },
+    )?
+    else {
         return Ok(None);
     };
     let webdriver_login_url = if provider == "webdriver" {
-        match prompt_line(
+        match prompt_line_validated(
             terminal,
-            "login_url",
+            "login URL (the bank's login page, e.g. https://example.com/login)",
             initial.webdriver_login_url.as_deref().unwrap_or(""),
+            |value| {
+                if value.starts_with("http://") || value.starts_with("https://") {
+                    Ok(())
+                } else {
+                    Err("must start with http:// or https://".to_string())
+                }
+            },
         )? {
             Some(url) => Some(url),
             None => return Ok(None),
@@ -338,6 +426,74 @@ fn gather_form_input(
     }))
 }
 
+/// Like `prompt_line`, but loops on an invalid value: shows what's
+/// wrong, then re-prompts the *same* field with what was already typed
+/// still in the buffer, rather than bubbling the error up and
+/// discarding every field gathered so far.
+fn prompt_line_validated(
+    terminal: &mut Term,
+    label: &str,
+    initial: &str,
+    validate: impl Fn(&str) -> Result<(), String>,
+) -> io::Result<Option<String>> {
+    let mut current = initial.to_string();
+    loop {
+        let Some(value) = prompt_line(terminal, label, &current)? else {
+            return Ok(None);
+        };
+        match validate(&value) {
+            Ok(()) => return Ok(Some(value)),
+            Err(message) => {
+                current = value;
+                show_message(terminal, &message)?;
+            }
+        }
+    }
+}
+
+/// Picks one of `options` (`(internal_value, display_label)` pairs) via
+/// up/down + Enter, starting at `initial_index`. Returns the
+/// `internal_value` of whichever option was selected — the user never
+/// types or sees the internal string directly.
+fn select_prompt(
+    terminal: &mut Term,
+    label: &str,
+    options: &[(&str, &str)],
+    initial_index: usize,
+) -> io::Result<Option<String>> {
+    let mut selected = initial_index.min(options.len().saturating_sub(1));
+    loop {
+        terminal.draw(|frame| {
+            let area = prompt_area(frame.area(), 1 + options.len() as u16);
+            let mut lines = vec![Line::from(format!("{label}:"))];
+            lines.extend(options.iter().enumerate().map(|(i, (_, display))| {
+                let prefix = if i == selected { "> " } else { "  " };
+                Line::from(format!("{prefix}{display}"))
+            }));
+            frame.render_widget(
+                Paragraph::new(lines).block(Block::default().borders(Borders::ALL)),
+                area,
+            );
+        })?;
+
+        let Event::Key(key) = event::read()? else {
+            continue;
+        };
+        if key.kind != KeyEventKind::Press {
+            continue;
+        }
+        match key.code {
+            KeyCode::Enter => return Ok(Some(options[selected].0.to_string())),
+            KeyCode::Esc => return Ok(None),
+            KeyCode::Down | KeyCode::Char('j') => selected = (selected + 1) % options.len(),
+            KeyCode::Up | KeyCode::Char('k') => {
+                selected = (selected + options.len() - 1) % options.len();
+            }
+            _ => {}
+        }
+    }
+}
+
 /// Single-line text prompt, pre-filled with `initial`. `Enter` confirms,
 /// `Esc` cancels the whole form (not just this field) — a deliberate
 /// simplification over per-field cancel, since a partially-filled
@@ -346,7 +502,7 @@ fn prompt_line(terminal: &mut Term, label: &str, initial: &str) -> io::Result<Op
     let mut buffer = initial.to_string();
     loop {
         terminal.draw(|frame| {
-            let area = prompt_area(frame.area());
+            let area = prompt_area(frame.area(), 1);
             let text = format!("{label}: {buffer}");
             frame.render_widget(
                 Paragraph::new(text).block(Block::default().borders(Borders::ALL)),
@@ -373,8 +529,9 @@ fn prompt_line(terminal: &mut Term, label: &str, initial: &str) -> io::Result<Op
 }
 
 fn show_message(terminal: &mut Term, message: &str) -> io::Result<()> {
+    let lines = message.lines().count() as u16 + 2; // + blank line + "press any key"
     terminal.draw(|frame| {
-        let area = prompt_area(frame.area());
+        let area = prompt_area(frame.area(), lines);
         frame.render_widget(
             Paragraph::new(format!("{message}\n\n(press any key to continue)"))
                 .style(Style::default().fg(VERMILLION))
@@ -386,9 +543,9 @@ fn show_message(terminal: &mut Term, message: &str) -> io::Result<()> {
     Ok(())
 }
 
-fn prompt_area(area: Rect) -> Rect {
+fn prompt_area(area: Rect, content_lines: u16) -> Rect {
     Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Length(5), Constraint::Min(0)])
+        .constraints([Constraint::Length(content_lines + 2), Constraint::Min(0)])
         .split(area)[0]
 }
