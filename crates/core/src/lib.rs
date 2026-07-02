@@ -6,6 +6,7 @@ mod migration;
 mod networth;
 mod pii;
 mod plaid;
+mod plaid_link;
 mod plaid_provider;
 mod provider;
 mod retry;
@@ -28,6 +29,7 @@ pub use plaid::{
     PlaidBalances, PlaidClient, PlaidConfig, PlaidEnvironment, PlaidError, PlaidItem,
     RemoveItemResponse, SandboxPublicTokenResponse,
 };
+pub use plaid_link::{complete_plaid_link, CompleteLinkError, SelectedAccount};
 pub use plaid_provider::PlaidProvider;
 pub use provider::{
     provider_registry, Credentials, Provider, ProviderError, ProviderFactory, SourceConfig,

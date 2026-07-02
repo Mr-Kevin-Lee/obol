@@ -989,12 +989,12 @@ screen for managing connections (§10.1).
 | Browser automation | `fantoccini` (WebDriver protocol, via chromedriver/geckodriver) | No Rust Playwright bindings exist. **Needs a spike**: WebDriver automation has historically struggled more than Playwright's CDP approach against heavy anti-bot/JS bank login flows — validate against a real target before committing (§7) |
 | TLS | `rustls` (via `reqwest`'s `rustls-tls` feature) | Memory-safe TLS stack, avoids linking OpenSSL and its associated CVE history |
 | Secrets | `secrecy` + `zeroize` | `secrecy` prevents accidental exposure via `Debug`/logging; `zeroize` gives deterministic, compiler-enforced wiping on drop (§4) |
-| Keychain | `security-framework` crate | Rust bindings to macOS Security.framework; same `kSecAttrAccessibleWhenUnlockedThisDeviceOnly` ACL as before |
+| Keychain | `security-framework` crate | Rust bindings to macOS Security.framework; same `kSecAttrAccessibleWhenUnlockedThisDeviceOnly` ACL as before. Storing (not reading/deleting) an item with this ACL is currently broken and parked, not resolved — see D24 |
 | Retry logic | `tokio-retry` (`RetryIf` + `ExponentialBackoff`) | Same policy as §9 (3 attempts, exponential backoff, jitter); `RetryIf`'s condition closure is what lets auth failures fail fast instead of retrying (D10, §16) — simpler than hand-rolling the same branch |
 | **CLI/TUI (phase 1)** | `clap` + `ratatui` | `clap` for scriptable commands (`dashboard snapshot`), `ratatui` for the interactive terminal dashboard/sources screens — mature, well-regarded Rust TUI framework |
 | **GUI (phase 2)** | Local HTTP(S) endpoint (`127.0.0.1:<port>`), reachable via browser | Simpler packaging than a native GUI toolkit — no bundled UI framework. **Trade-off to design properly once we get here (decision D7, §16):** unlike a native app, a listening port has real local attack surface (other local processes, DNS-rebinding from a malicious page in another tab) that needs mitigating — session token, strict `Host` header checks, no CDN-loaded assets. Deferred until after v0.1/v0.2 are done, not designed yet |
 | Charts | `plotters` | Renders to both the TUI (via `ratatui` widgets) and the GUI canvas; colorblind-safe palette applied manually since it's a lower-level library than Plotly |
-| Packaging | `cargo build --release` (native binary) | No interpreter or bundler runtime to ship. **Codesigning/notarization is not needed for v0.1/v0.2**: a binary you build locally and run from Terminal never gets the `com.apple.quarantine` attribute that triggers Gatekeeper — that only applies to files downloaded via a browser, Mail, or AirDrop. This only becomes a real question if the tool is ever distributed as a `.app` for someone else, or downloaded rather than built — and since the "GUI" phase is a browser-reached HTTP endpoint (D7), not a native `.app` bundle, it may never apply to this project at all |
+| Packaging | `cargo build --release` (native binary) | No interpreter or bundler runtime to ship. **Gatekeeper/notarization is not needed for v0.1/v0.2**: a binary you build locally and run from Terminal never gets the `com.apple.quarantine` attribute that triggers Gatekeeper — that only applies to files downloaded via a browser, Mail, or AirDrop. This only becomes a real question if the tool is ever distributed as a `.app` for someone else, or downloaded rather than built. **Separately, storing a Keychain item with the required `ThisDeviceOnly` ACL currently doesn't work at all, signed or not** (decision D24, §16) — parked, not resolved; the release binary can't actually persist a Plaid access token until this is fixed |
 | Dependency management | `Cargo.lock` (committed) | Rust's default toolchain is already lockfile-first, directly reinforcing the supply-chain principle in §4 |
 | Logging | `tracing` + `tracing-subscriber` | Backs the audit log requirement (§4) — structured, filterable, and the natural place to enforce "never log a credential or full account number" as a consistent policy rather than an ad-hoc discipline |
 | Error handling | `thiserror` in the core library (typed `ProviderError`, `SnapshotError`, etc. — see the `Provider` trait in §10); `anyhow` in the CLI/TUI binary for top-level error reporting | Conventional Rust split: typed, matchable errors in the library; ergonomic error context at the application boundary |
@@ -1240,3 +1240,33 @@ Previously open questions, now resolved:
   plan (§7) does apply as originally assumed — this simplification isn't
   a response to a billing surprise, just a straightforward reduction in
   product surface and future cost exposure.
+- **D24 — Storing a Plaid access token in Keychain is currently broken,
+  and parked rather than fixed** (§4, §8, §14): discovered while
+  finishing task 19 — an unsigned `cargo build`/`cargo test` binary hits
+  `errSecMissingEntitlement` (-34018) the moment it calls `SecItemAdd`
+  with the `SecAccessControl` needed for
+  `kSecAttrAccessibleWhenUnlockedThisDeviceOnly` (§4, §8's accessibility
+  requirement). Reading/deleting an existing item are unaffected — only
+  storing a new/updated one sets an ACL. The first fix attempted —
+  ad-hoc self-signing (`codesign --sign - --entitlements
+  entitlements.plist`, repo root) with a `keychain-access-groups`
+  entitlement — made things worse: the process was killed outright by
+  the kernel (AMFI) before any code ran, strongly suggesting `-`
+  (ad-hoc) signing isn't authorized to grant that entitlement at all and
+  a real signing identity is needed instead. **Explicitly parked, not
+  resolved** — `entitlements.plist` and `make test-keychain` are left in
+  the repo as a documented starting point, not a working recipe. Options
+  on the table for whoever revisits this: (1) a free local Apple
+  Development signing identity via Xcode ("Personal Team," no paid
+  membership required), or (2) bypassing `SecAccessControl` entirely via
+  a small amount of raw FFI to set `kSecAttrAccessible` as a plain
+  attribute instead of an ACL object (untested theory — `security-framework`'s
+  high-level API doesn't expose this). Relaxing the accessibility level
+  instead (dropping `ThisDeviceOnly`) was ruled out: that would make the
+  token eligible for iCloud Keychain sync, which §4/§8 explicitly
+  require avoiding. Until this is resolved, `PlaidProvider`/the Link
+  flow (`plaid_link.rs`) can't actually persist a usable access token
+  end-to-end on this machine — the orchestration logic itself
+  (exchange → store-per-account → increment-once → write sources) is
+  implemented and unit-tested apart from the real Keychain write, which
+  remains an `#[ignore]`d, currently-failing test.

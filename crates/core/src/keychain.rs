@@ -7,14 +7,24 @@
 //!
 //! **Confidence note:** `read`/`delete` use `security-framework`'s
 //! high-level `passwords` module, confirmed working against a real
-//! Keychain. `store` uses `set_generic_password_options` with a
-//! `SecAccessControl` built from `ProtectionMode::
-//! AccessibleWhenUnlockedThisDeviceOnly` — confirmed via docs.rs to be
-//! the documented, high-level way to set this accessibility level (§4,
-//! §8), not a raw-FFI guess. Not calling `set_access_synchronized`
-//! explicitly: `ThisDeviceOnly` protection classes are categorically
-//! excluded from Keychain sync by Apple's own semantics, so setting it
-//! separately would be redundant at best.
+//! Keychain, unsigned binary included. `store` uses
+//! `set_generic_password_options` with a `SecAccessControl` built from
+//! `ProtectionMode::AccessibleWhenUnlockedThisDeviceOnly` — this is the
+//! documented, high-level way to set this accessibility level (§4, §8),
+//! not a raw-FFI guess, but **this path is currently broken and parked,
+//! not fixed (decision D24, §16)**: an unsigned binary fails with
+//! `errSecMissingEntitlement` (-34018), and ad-hoc-signing
+//! (`codesign --sign -`) with a `keychain-access-groups` entitlement —
+//! the fix attempted first — made it *worse*, getting the process killed
+//! outright by the kernel (AMFI) before any code runs. Root cause not
+//! fully confirmed. `entitlements.plist` (repo root) and `make
+//! test-keychain` are left in place as a documented, known-non-working
+//! starting point for whoever revisits this, not a working recipe.
+//! `read`/`delete` never hit this, since they don't request an
+//! ACL-scoped item — only `store` is affected. Not calling
+//! `set_access_synchronized` explicitly: `ThisDeviceOnly` protection
+//! classes are categorically excluded from Keychain sync by Apple's own
+//! semantics, so setting it separately would be redundant at best.
 
 use secrecy::{ExposeSecret, Secret};
 use security_framework::access_control::{ProtectionMode, SecAccessControl};
@@ -113,10 +123,15 @@ mod tests {
     use super::*;
 
     // These need a real Keychain, so they're #[ignore]d like the Plaid
-    // Sandbox tests — run explicitly with:
-    //   cargo test -p obol-core --lib -- --ignored keychain
-    // A macOS permission prompt on first run would be expected/normal
-    // for an unsigned dev binary touching Keychain for the first time.
+    // Sandbox tests. `access_token_round_trips` and
+    // `app_credentials_round_trip` call store_plaid_access_token /
+    // store_plaid_app_credentials, which are currently broken/parked
+    // (see the module doc comment, D24, §16) — they will fail with
+    // errSecMissingEntitlement (or worse, get killed, if run against a
+    // binary signed per the parked entitlements.plist attempt) until
+    // that's resolved. `reading_a_nonexistent_entry_is_an_error` only
+    // reads, so it's unaffected and works with plain `cargo test
+    // -p obol-core --lib -- --ignored keychain`.
 
     #[test]
     #[ignore = "requires a real macOS Keychain"]
