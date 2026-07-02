@@ -91,4 +91,29 @@ mod tests {
             Mode::SnapshotHeadless
         );
     }
+
+    /// Exercises the real YAML-parsing path (`obol_core::load_or_init`,
+    /// same `serde_saphyr` parser sources.rs's own tests cover) feeding
+    /// into `determine_mode`, rather than only synthetic Rust-built
+    /// `SourceConfig` values — a realistic two-source `sources.yaml`
+    /// (matching the shape spec §10's own example uses) should parse
+    /// cleanly and land on Dashboard mode.
+    #[test]
+    fn a_realistic_sources_yaml_fixture_loads_and_selects_dashboard_mode() {
+        let fixture_path = std::path::Path::new(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/sources.yaml"
+        ));
+
+        let sources = obol_core::load_or_init(fixture_path).expect("fixture should parse");
+
+        assert_eq!(sources.len(), 2);
+        assert!(sources.iter().any(|s| s.id == "chase_checking"));
+        assert!(sources.iter().any(|s| s.id == "apple_card"));
+
+        assert_eq!(
+            determine_mode(sources.is_empty(), RequestedCommand::Default),
+            Mode::Dashboard
+        );
+    }
 }

@@ -1,0 +1,16 @@
+sources:
+  - id: chase_checking
+    provider: manual_entry
+    category: asset
+    type: checking
+    institution: Chase
+    account_salt: "b64:test-fixture-salt-1"
+    provider_config: {}
+
+  - id: apple_card
+    provider: manual_entry
+    category: liability
+    type: credit_card
+    institution: Goldman Sachs
+    account_salt: "b64:test-fixture-salt-2"
+    provider_config: {}
