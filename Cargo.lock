@@ -1093,6 +1093,7 @@ dependencies = [
  "crossterm",
  "obol-core",
  "ratatui",
+ "serde_json",
  "tokio",
 ]
 

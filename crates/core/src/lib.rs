@@ -1,6 +1,7 @@
 mod account;
 mod engine;
 mod item_usage;
+mod item_usage_storage;
 mod keychain;
 mod lock;
 mod migration;
@@ -18,6 +19,7 @@ mod storage;
 pub use account::{Account, AccountStatus, Asset, Liability};
 pub use engine::{run, run_and_save, CredentialSource, RunAndSaveResult};
 pub use item_usage::{ItemUsageCounter, PLAID_ITEM_LIMIT, PLAID_ITEM_WARNING_THRESHOLD};
+pub use item_usage_storage::{load_or_init_item_usage, save_item_usage, ItemUsageStorageError};
 pub use keychain::{
     delete_plaid_access_token, read_plaid_access_token, read_plaid_app_credentials,
     store_plaid_access_token, store_plaid_app_credentials, KeychainError,

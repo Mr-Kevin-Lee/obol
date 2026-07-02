@@ -1,5 +1,7 @@
 mod dashboard;
+mod form;
 mod mode;
+mod sources_screen;
 
 use std::path::PathBuf;
 
@@ -58,6 +60,8 @@ async fn main() {
 
     let storage_dir = storage_dir();
     let sources_path = storage_dir.join("sources.yaml");
+    let item_usage_path = storage_dir.join("item_usage.json");
+    let snapshots_dir = storage_dir.join("snapshots");
     let sources = match obol_core::load_or_init(&sources_path) {
         Ok(sources) => sources,
         Err(err) => {
@@ -68,17 +72,18 @@ async fn main() {
         }
     };
 
-    // Sources screen (task 24) and headless snapshot wiring still just
-    // placeholders below — Dashboard (task 23) is the first branch
-    // wired to the real engine.
+    // Headless snapshot wiring is still a placeholder below — Dashboard
+    // (task 23) and Sources (task 24) are wired to the real engine.
     match determine_mode(sources.is_empty(), requested) {
-        Mode::FirstRunSources => {
-            println!("No sources configured yet — Sources screen goes here (task 24).");
+        Mode::FirstRunSources | Mode::Sources => {
+            if let Err(err) = sources_screen::run(&sources_path, &item_usage_path, &snapshots_dir) {
+                eprintln!("sources screen failed: {err}");
+                std::process::exit(1);
+            }
         }
         Mode::Dashboard => {
             let registry = obol_core::provider_registry();
             let credential_source = NoInteractiveProvidersYet;
-            let snapshots_dir = storage_dir.join("snapshots");
 
             let result =
                 obol_core::run_and_save(&sources, &registry, &credential_source, &snapshots_dir)
@@ -92,9 +97,6 @@ async fn main() {
                 eprintln!("dashboard rendering failed: {err}");
                 std::process::exit(1);
             }
-        }
-        Mode::Sources => {
-            println!("Sources screen goes here (task 24).");
         }
         Mode::SnapshotHeadless => {
             println!(
