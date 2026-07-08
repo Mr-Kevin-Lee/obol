@@ -30,6 +30,18 @@ struct SourceLedgerEntry {
     /// across runs (D15) must not depend on whether this run happened
     /// to find a new file.
     last_account_identifier: String,
+    /// The modified-time (Unix epoch seconds) of the most recently
+    /// *processed* file — distinct from `processed_filenames`'s
+    /// by-content-hash tracking, which only ever answers "have I seen
+    /// this exact file before." Without this, two statements dropped in
+    /// at once (e.g. both an April and a May PDF, neither previously
+    /// processed) would have the newer one processed first, then the
+    /// *older* one processed on the very next run — since it was still
+    /// individually unprocessed — silently regressing the reported
+    /// balance to a stale statement. Defaults to `0` (the Unix epoch),
+    /// which is always older than any real file, so a source's very
+    /// first processed file is never rejected by this check.
+    last_processed_mtime_secs: i64,
 }
 
 /// Per-source processed-file tracking (spec §6.3). Keyed by
@@ -55,7 +67,7 @@ impl ProcessedFilesLedger {
     }
 
     /// Records a filename+hash as processed and updates the source's
-    /// last-known balance/identifier. Call only after a successful
+    /// last-known balance/identifier/mtime. Call only after a successful
     /// parse — a parse failure must never be recorded here, so the same
     /// file is retried next run once it's fixed, instead of being
     /// silently skipped forever.
@@ -67,6 +79,7 @@ impl ProcessedFilesLedger {
         balance: f64,
         as_of_date: &str,
         account_identifier: &str,
+        mtime_secs: i64,
     ) {
         let entry = self.per_source.entry(source_id.to_string()).or_default();
         entry
@@ -75,6 +88,20 @@ impl ProcessedFilesLedger {
         entry.last_balance = balance;
         entry.last_as_of_date = as_of_date.to_string();
         entry.last_account_identifier = account_identifier.to_string();
+        entry.last_processed_mtime_secs = mtime_secs;
+    }
+
+    /// The modified-time (Unix epoch seconds) of the most recently
+    /// processed file for this source, or `0` if none has ever been
+    /// processed — see `SourceLedgerEntry::last_processed_mtime_secs`.
+    /// `newest_unprocessed_pdf` uses this to reject any candidate file
+    /// that isn't strictly newer, closing the "two statements dropped
+    /// in at once" regression gap described there.
+    pub fn last_processed_mtime_secs(&self, source_id: &str) -> i64 {
+        self.per_source
+            .get(source_id)
+            .map(|entry| entry.last_processed_mtime_secs)
+            .unwrap_or(0)
     }
 
     /// The balance/as-of-date/account-identifier from the most recently
@@ -116,6 +143,7 @@ mod tests {
             100.0,
             "2026-06-30",
             "6789",
+            1000,
         );
 
         assert!(ledger.is_processed("chase_checking", "statement.pdf", "abc123"));
@@ -131,6 +159,7 @@ mod tests {
             100.0,
             "2026-06-30",
             "6789",
+            1000,
         );
 
         // Same filename, different content hash — e.g. a corrected
@@ -148,6 +177,7 @@ mod tests {
             100.0,
             "2026-06-30",
             "6789",
+            1000,
         );
         ledger.mark_processed(
             "chase_checking",
@@ -156,6 +186,7 @@ mod tests {
             150.0,
             "2026-07-31",
             "6789",
+            2000,
         );
 
         assert_eq!(
@@ -179,6 +210,7 @@ mod tests {
             100.0,
             "2026-06-30",
             "6789",
+            1000,
         );
 
         let (_, _, identifier) = ledger.last_known("chase_checking").unwrap();
@@ -195,6 +227,7 @@ mod tests {
             100.0,
             "2026-06-30",
             "6789",
+            1000,
         );
 
         // A different source's ledger entry is untouched.
@@ -207,6 +240,37 @@ mod tests {
     }
 
     #[test]
+    fn last_processed_mtime_secs_defaults_to_zero_for_an_unknown_source() {
+        let ledger = ProcessedFilesLedger::new();
+        assert_eq!(ledger.last_processed_mtime_secs("chase_checking"), 0);
+    }
+
+    #[test]
+    fn last_processed_mtime_secs_reflects_the_most_recently_marked_file() {
+        let mut ledger = ProcessedFilesLedger::new();
+        ledger.mark_processed(
+            "chase_checking",
+            "june.pdf",
+            "hash-june",
+            100.0,
+            "2026-06-30",
+            "6789",
+            1000,
+        );
+        ledger.mark_processed(
+            "chase_checking",
+            "july.pdf",
+            "hash-july",
+            150.0,
+            "2026-07-31",
+            "6789",
+            2000,
+        );
+
+        assert_eq!(ledger.last_processed_mtime_secs("chase_checking"), 2000);
+    }
+
+    #[test]
     fn serializes_and_deserializes_correctly() {
         let mut ledger = ProcessedFilesLedger::new();
         ledger.mark_processed(
@@ -216,6 +280,7 @@ mod tests {
             100.0,
             "2026-06-30",
             "6789",
+            1000,
         );
 
         let json = serde_json::to_string(&ledger).unwrap();

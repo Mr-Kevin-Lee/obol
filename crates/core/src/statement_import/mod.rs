@@ -132,7 +132,7 @@ impl Provider for StatementImportProvider {
         })?;
 
         let (balance, _as_of_date, account_identifier) = match candidate {
-            Some((path, filename, content_hash)) => {
+            Some((path, filename, content_hash, mtime_secs)) => {
                 let parser = parser_for(&source.institution).ok_or_else(|| {
                     ProviderError::Other(format!(
                         "no statement parser registered for institution '{}'",
@@ -166,6 +166,7 @@ impl Provider for StatementImportProvider {
                     parsed.balance,
                     &parsed.as_of_date,
                     &parsed.account_identifier,
+                    mtime_secs,
                 );
                 save_processed_files(&self.ledger_path, &ledger).map_err(|e| {
                     ProviderError::Other(format!("could not save processed-files ledger: {e}"))
@@ -226,16 +227,26 @@ impl Provider for StatementImportProvider {
 /// Lists `watch_dir`, filters to `*.pdf` (case-insensitive), skips
 /// anything the ledger already has recorded for this source (by
 /// content hash, not just filename — a same-named re-download with
-/// different bytes is treated as new), and returns the most recently
-/// modified remaining file, if any. A dropbox can accumulate older
-/// statements over time; only the newest matters for a current-balance
-/// snapshot (this isn't a transaction ledger).
+/// different bytes is treated as new), **and skips anything strictly
+/// older than the last file actually processed for this source** (by
+/// mtime — ties are allowed through, since two files can legitimately
+/// share a whole-second mtime), even if that particular file was never
+/// individually seen before. Without that second check, two statements
+/// dropped in at once (e.g. April and May, neither previously
+/// processed) would have the newer one processed first, then the
+/// *older* one processed on the very next run — since it was still
+/// individually unprocessed — silently regressing the reported balance
+/// to a stale statement. Returns the most recently modified remaining
+/// file, if any — a dropbox can accumulate older statements over time;
+/// only the newest matters for a current-balance snapshot (this isn't a
+/// transaction ledger).
 fn newest_unprocessed_pdf(
     watch_dir: &Path,
     source_id: &str,
     ledger: &ProcessedFilesLedger,
-) -> std::io::Result<Option<(PathBuf, String, String)>> {
-    let mut candidates: Vec<(PathBuf, String, String, SystemTime)> = Vec::new();
+) -> std::io::Result<Option<(PathBuf, String, String, i64)>> {
+    let last_processed_mtime_secs = ledger.last_processed_mtime_secs(source_id);
+    let mut candidates: Vec<(PathBuf, String, String, i64)> = Vec::new();
 
     for entry in fs::read_dir(watch_dir)? {
         let entry = entry?;
@@ -262,13 +273,25 @@ fn newest_unprocessed_pdf(
         }
 
         let mtime = entry.metadata()?.modified()?;
-        candidates.push((path, filename, content_hash, mtime));
+        let mtime_secs = system_time_to_epoch_secs(mtime);
+        // Strictly older only — two files can legitimately share a
+        // whole-second mtime (fast successive writes, or a batch
+        // download), and a tie shouldn't make a genuinely-just-arrived
+        // file permanently unprocessable.
+        if mtime_secs < last_processed_mtime_secs {
+            continue;
+        }
+        candidates.push((path, filename, content_hash, mtime_secs));
     }
 
-    candidates.sort_by_key(|(_, _, _, mtime)| *mtime);
-    Ok(candidates
-        .pop()
-        .map(|(path, filename, hash, _)| (path, filename, hash)))
+    candidates.sort_by_key(|(_, _, _, mtime_secs)| *mtime_secs);
+    Ok(candidates.pop())
+}
+
+fn system_time_to_epoch_secs(t: SystemTime) -> i64 {
+    t.duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0)
 }
 
 fn sha256_hex(bytes: &[u8]) -> String {
@@ -280,6 +303,7 @@ fn sha256_hex(bytes: &[u8]) -> String {
 mod tests {
     use super::*;
     use serde_json::json;
+    use std::time::Duration;
     use std::fs;
 
     fn temp_dir(name: &str) -> PathBuf {
@@ -424,6 +448,51 @@ mod tests {
 
         let second = provider.fetch(&source(&dir, None), None).await.unwrap();
         assert_eq!(second[0].balance(), Some(1234.56));
+
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn newest_unprocessed_pdf_never_regresses_to_a_file_older_than_the_last_processed_one() {
+        // Regression test for a real bug: two statements (e.g. April and
+        // May) both dropped in before the *first* fetch ever runs. The
+        // first fetch correctly picks the newer one — but without the
+        // mtime floor, the second fetch would then pick the older one
+        // next, since it was individually still "unprocessed", silently
+        // regressing the reported balance to a stale statement.
+        let dir = temp_dir("mtime-regression");
+        let older = dir.join("statement-april.pdf");
+        let newer = dir.join("statement-may.pdf");
+        fs::write(&older, b"older content").unwrap();
+        fs::write(&newer, b"newer content").unwrap();
+
+        let now = SystemTime::now();
+        fs::File::open(&older)
+            .unwrap()
+            .set_modified(now - Duration::from_secs(3600))
+            .unwrap();
+        fs::File::open(&newer).unwrap().set_modified(now).unwrap();
+
+        let mut ledger = ProcessedFilesLedger::new();
+        // Simulate having already successfully processed the newer file
+        // on a prior run — must be the file's *real* content hash, or
+        // the by-hash check alone would treat it as unprocessed and
+        // this test wouldn't actually exercise the mtime floor at all.
+        ledger.mark_processed(
+            "chase_checking",
+            "statement-may.pdf",
+            &sha256_hex(b"newer content"),
+            100.0,
+            "2026-05-31",
+            "1234",
+            system_time_to_epoch_secs(now),
+        );
+
+        let candidate = newest_unprocessed_pdf(&dir, "chase_checking", &ledger).unwrap();
+
+        // The older file must never be selected, even though it was
+        // never individually marked as processed for this source.
+        assert!(candidate.is_none());
 
         fs::remove_dir_all(&dir).ok();
     }

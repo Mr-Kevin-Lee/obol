@@ -109,6 +109,7 @@ mod tests {
             100.0,
             "2026-06-30",
             "6789",
+            1000,
         );
         save_processed_files(&path, &ledger).unwrap();
 

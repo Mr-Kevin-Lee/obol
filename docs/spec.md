@@ -1458,6 +1458,36 @@ Previously open questions, now resolved:
   `StatementImportProvider` now holds a `tokio::sync::Mutex` around that
   one file's load→mark→save sequence; unrelated work (PDF parsing,
   other sources entirely) still runs fully concurrently.
+  **Addendum 4**: `ChaseStatementParser` now also recognizes a real
+  credit-card layout (verified against a real Chase Sapphire Reserve
+  statement — field labels only, never a real balance/account number/
+  name), alongside the original checking/savings layout — closing half
+  of the gap the addendum 2/3 caveats flagged as unverified. Account
+  identification uses `"Account Number:  XXXX XXXX XXXX ####"` (masked
+  groups, last 4 real) rather than checking's unmasked `"Account ending
+  in ####"`; both are now found via one shared "skip past masking
+  characters, then capture the digit run" helper. Category detection's
+  liability-keyword list gained `"Credit Access Line"` — this real
+  statement's actual wording, which the original guessed list (`"Credit
+  Limit"`) would have missed entirely, since it never appears verbatim.
+  `"Credit Limit"` stays in the list too, for other Chase card products
+  that may still use it. Still open: this same statement's newest PDF
+  hits the pdf-extract panic from addendum 3's fix on the checking side
+  (a different real file, unrelated font-encoding issue) — tracked
+  separately, not fixed by this addendum.
+  **Addendum 5**: real multi-account testing surfaced a further ledger
+  correctness gap — `newest_unprocessed_pdf` only ever excluded files
+  already recorded as processed *by content hash*, not files older than
+  whatever had already been successfully processed. If two statements
+  for the same account (e.g. April and May) both existed before the
+  *first* fetch ever ran, the first fetch correctly picked the newer
+  one, but the very next fetch — finding the older file still
+  individually "unprocessed" — would process it too, silently
+  regressing the reported balance to a stale statement. Fixed by
+  tracking each source's last-processed file mtime
+  (`SourceLedgerEntry.last_processed_mtime_secs`) and never selecting a
+  candidate strictly older than it (ties allowed through, since two
+  files can legitimately share a whole-second mtime).
 - **D29 — Statement sources auto-discovered from `~/Statements/<Institution>/<Account>`**
   (§6.3, Phase K, tasks 38–41): task 37 made adding a `statement_import`
   source possible through the UI, but each one still had to be added by

@@ -7,14 +7,27 @@
 //! never a PDF file itself — kept a pure string-in/struct-out function
 //! so it's testable against inline fixtures without any PDF I/O.
 //!
-//! Heuristic, not a full grammar: looks for `"Account ending in ####"`
-//! blocks and takes the next `"Balance $X"` after each one as that
-//! account's balance. This assumes Chase pairs an account's own
-//! identifying line near its own balance line (true of the real Chase
-//! statement layout this was modeled on) rather than grouping all
-//! account numbers separately from all balances — a real-world fixture
-//! should confirm this once one is available, per the reference-only
-//! caveat already noted for this synthetic fixture.
+//! Handles two distinct real Chase layouts (checking/savings and credit
+//! card), both confirmed against real statement structure — field
+//! labels and section headers only, no real balances/account numbers/
+//! names ever appear in this file or its tests:
+//! - **Checking/savings**: `"Account ending in ####"` (straight digits,
+//!   no masking) paired with the nearest following `"Balance $X"`.
+//! - **Credit card** (e.g. Sapphire Reserve): `"Account Number:  XXXX
+//!   XXXX XXXX ####"` (masked groups, last 4 real) paired with `"New
+//!   Balance $X"` — `"Balance $"` is a substring of `"New Balance $"`,
+//!   so the same balance-marker search already covers both. Category
+//!   detection (`detect_category`) also uses this layout's real
+//!   liability terminology: `"Credit Access Line"` (this card's actual
+//!   wording — notably *not* the generic `"Credit Limit"` originally
+//!   guessed) and `"Available Credit"`/`"Minimum Payment Due"`, both
+//!   confirmed present verbatim.
+//!
+//! Both account-id markers are found via the same
+//! "skip past any non-digit masking characters, then capture the digit
+//! run" helper — it happens to work for both layouts unchanged, since
+//! `"Account ending in "` has zero masking characters to skip and
+//! `"Account Number:  XXXX XXXX XXXX "` has several.
 
 use crate::statement_import::parser::{ExpectedAccount, ParseError, ParsedStatement, StatementParser};
 use crate::Category;
@@ -34,7 +47,7 @@ impl StatementParser for ChaseStatementParser {
         let accounts = extract_account_sections(text);
         if accounts.is_empty() {
             return Err(ParseError::UnrecognizedLayout(
-                "no 'Account ending in ####' section found".into(),
+                "no 'Account ending in ####' or 'Account Number:' section found".into(),
             ));
         }
 
@@ -67,35 +80,49 @@ struct AccountSection {
     balance: f64,
 }
 
-/// Finds every `"Account ending in ####"` and the `"Balance $X"` that
-/// follows it. Searches loosely by substring position rather than
+/// Finds every account-id marker (checking/savings' `"Account ending in
+/// ####"` or credit card's `"Account Number:"`) and the `"Balance $X"`
+/// that follows it. Searches loosely by substring position rather than
 /// assuming a fixed line structure, since `pdf-extract`'s line breaks
 /// don't necessarily match the statement's original visual layout.
 fn extract_account_sections(text: &str) -> Vec<AccountSection> {
-    const MARKER: &str = "Account ending in ";
+    const MARKERS: &[&str] = &["Account ending in ", "Account Number:"];
     let mut sections = Vec::new();
-    let mut search_from = 0;
 
-    while let Some(rel_pos) = text[search_from..].find(MARKER) {
-        let last4_start = search_from + rel_pos + MARKER.len();
-        let last4: String = text[last4_start..]
-            .chars()
-            .take_while(|c| c.is_ascii_digit())
-            .collect();
-
-        if last4.len() == 4 {
-            if let Some(balance) = find_next_balance(&text[last4_start..]) {
-                sections.push(AccountSection { last4, balance });
+    for marker in MARKERS {
+        let mut search_from = 0;
+        while let Some(rel_pos) = text[search_from..].find(marker) {
+            let after_marker = search_from + rel_pos + marker.len();
+            if let Some(last4) = extract_last4(&text[after_marker..]) {
+                if let Some(balance) = find_next_balance(&text[after_marker..]) {
+                    sections.push(AccountSection { last4, balance });
+                }
             }
-        }
 
-        search_from = last4_start;
-        if search_from >= text.len() {
-            break;
+            search_from = after_marker;
+            if search_from >= text.len() {
+                break;
+            }
         }
     }
 
     sections
+}
+
+/// Skips past up to 40 non-digit characters (masking `X`s, spaces —
+/// `"Account Number:  XXXX XXXX XXXX ####"`'s masked groups, or nothing
+/// at all for `"Account ending in ####"`, which has none) and captures
+/// the first 4-digit run found. Bounded so a marker with no digits
+/// anywhere nearby (e.g. right at the end of the document) can't walk
+/// off into unrelated later text.
+fn extract_last4(text: &str) -> Option<String> {
+    let window: String = text.chars().take(40).collect();
+    let digit_start = window.find(|c: char| c.is_ascii_digit())?;
+    let last4: String = window[digit_start..]
+        .chars()
+        .take_while(|c| c.is_ascii_digit())
+        .collect();
+    (last4.len() == 4).then_some(last4)
 }
 
 /// Finds the next `"Balance $X"` after the given position and parses
@@ -128,15 +155,21 @@ fn extract_statement_date(text: &str) -> Option<String> {
 /// unlike Vanguard/Fidelity — which never need this at all — a Chase
 /// statement's category can't be assumed from the institution alone.
 ///
-/// **Unverified heuristic**: checks for generic, universal credit-card
-/// statement terminology, not anything modeled on a real Chase
-/// credit-card layout — only Chase's *checking* statement structure was
-/// confirmed against real statement wording (see this file's own
-/// module-level caveat above). A real Chase credit-card statement has
-/// never been seen while building this parser.
+/// Verified against a real Chase Sapphire Reserve statement (field
+/// labels only, never a real balance/account number/name): it says
+/// `"Minimum Payment Due"` and `"Available Credit"` verbatim, but
+/// **not** `"Credit Limit"` — it uses `"Credit Access Line"` instead.
+/// The original heuristic (guessed before any real credit-card
+/// statement had been seen) would have missed this real statement
+/// entirely; kept `"Credit Limit"` alongside it since other Chase card
+/// products may still use that wording.
 fn detect_category(text: &str) -> Category {
-    const LIABILITY_MARKERS: &[&str] =
-        &["Minimum Payment Due", "Credit Limit", "Available Credit"];
+    const LIABILITY_MARKERS: &[&str] = &[
+        "Minimum Payment Due",
+        "Credit Limit",
+        "Credit Access Line",
+        "Available Credit",
+    ];
     let lower = text.to_lowercase();
     let is_liability = LIABILITY_MARKERS
         .iter()
@@ -253,5 +286,44 @@ mod tests {
         let result = ChaseStatementParser.parse(text, &expected(None)).unwrap();
 
         assert_eq!(result.category, Category::Liability);
+    }
+
+    #[test]
+    fn parses_a_credit_card_statement_using_the_account_number_marker() {
+        let text = "CHASE\nAccount Number:  XXXX XXXX XXXX 4321\n\
+                     Statement Date: 06/30/2026\nNew Balance $567.89\n\
+                     Minimum Payment Due $35.00\n";
+
+        let result = ChaseStatementParser.parse(text, &expected(None)).unwrap();
+
+        assert_eq!(result.balance, 567.89);
+        assert_eq!(result.as_of_date, "06/30/2026");
+        assert_eq!(result.account_identifier, "4321");
+        assert_eq!(result.category, Category::Liability);
+    }
+
+    #[test]
+    fn credit_access_line_is_recognized_as_liability_terminology() {
+        // The real wording this card uses instead of the more generic
+        // "Credit Limit" guessed before any real statement was seen.
+        let text = "CHASE\nAccount Number:  XXXX XXXX XXXX 4321\n\
+                     New Balance $567.89\nBalance over the Credit Access Line $0.00\n";
+
+        let result = ChaseStatementParser.parse(text, &expected(None)).unwrap();
+
+        assert_eq!(result.category, Category::Liability);
+    }
+
+    #[test]
+    fn disambiguates_a_credit_card_account_via_account_hint() {
+        let text = "Account Number:  XXXX XXXX XXXX 1111\nNew Balance $100.00\n\
+                     Account Number:  XXXX XXXX XXXX 4321\nNew Balance $567.89\n";
+
+        let result = ChaseStatementParser
+            .parse(text, &expected(Some("4321")))
+            .unwrap();
+
+        assert_eq!(result.balance, 567.89);
+        assert_eq!(result.account_identifier, "4321");
     }
 }
