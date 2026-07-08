@@ -105,6 +105,15 @@ fn storage_dir() -> PathBuf {
     PathBuf::from(home).join("Library/Application Support/obol")
 }
 
+/// `~/Statements/` (spec §6.3 addendum, D29) — the root of the
+/// `<Institution>/<Account>` convention `discover_statement_sources`
+/// scans. Fixed rather than configurable in v1, same as `storage_dir`
+/// (D17).
+fn statements_root() -> PathBuf {
+    let home = std::env::var("HOME").expect("HOME must be set");
+    PathBuf::from(home).join("Statements")
+}
+
 /// Wires `core::engine`'s audit events (§4, task 26) to a local file —
 /// core only ever emits `tracing` events, never decides where they go
 /// (§6.1: no UI/presentation concerns in core); this is that decision,
@@ -148,15 +157,32 @@ async fn main() {
     let item_usage_path = storage_dir.join("item_usage.json");
     let processed_statements_path = storage_dir.join("processed_statements.json");
     let snapshots_dir = storage_dir.join("snapshots");
-    let sources = match obol_core::load_or_init(&sources_path) {
+    let mut sources = match obol_core::load_or_init(&sources_path) {
         Ok(sources) => sources,
         Err(err) => {
             // §9.1: a malformed sources.yaml blocks the whole run with a
             // clear message rather than falling back to an empty list.
+            // Deliberately checked before auto-discovery below — a
+            // broken config should never be written to while it's
+            // already broken.
             eprintln!("sources.yaml could not be loaded: {err}");
             std::process::exit(1);
         }
     };
+
+    // Statement auto-discovery (spec D29): runs once per process, here
+    // at startup — matching this CLI's one-shot synchronous invocation
+    // model (no background watcher). A directory added while obol is
+    // already running won't be picked up until the next invocation.
+    // Pushing newly-added sources into the in-memory `sources` directly
+    // (rather than re-reading the file) keeps `determine_mode` below
+    // accurate without a third disk read.
+    for new_source in obol_core::discover_statement_sources(&statements_root(), &sources) {
+        match obol_core::add_source(&sources_path, new_source.clone()) {
+            Ok(()) => sources.push(new_source),
+            Err(err) => eprintln!("warning: could not add auto-discovered source: {err}"),
+        }
+    }
 
     match determine_mode(sources.is_empty(), requested) {
         Mode::FirstRunSources | Mode::Sources => {

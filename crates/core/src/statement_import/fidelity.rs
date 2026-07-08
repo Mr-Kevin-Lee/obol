@@ -18,6 +18,7 @@
 //! since that's the date the ending balance is as-of.
 
 use crate::statement_import::parser::{ExpectedAccount, ParseError, ParsedStatement, StatementParser};
+use crate::Category;
 
 pub struct FidelityStatementParser;
 
@@ -54,6 +55,10 @@ impl StatementParser for FidelityStatementParser {
                     balance: plan.ending_balance,
                     as_of_date: extract_statement_period_end(text).unwrap_or_default(),
                     account_identifier: plan.heading.clone(),
+                    // Fidelity NetBenefits is retirement-only in this
+                    // app's scope (spec FR1: 401(k)) — always an asset,
+                    // no statement inspection needed.
+                    category: Category::Asset,
                 })
             }
             _ => Err(ParseError::AmbiguousMatch),
@@ -162,6 +167,7 @@ mod tests {
         assert_eq!(result.balance, 10000.00);
         assert_eq!(result.as_of_date, "03/31/2026");
         assert_eq!(result.account_identifier, "Acme Corp 401(k) Plan");
+        assert_eq!(result.category, Category::Asset);
     }
 
     #[test]

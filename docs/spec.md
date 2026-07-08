@@ -1438,3 +1438,37 @@ Previously open questions, now resolved:
   `statement_import` added to the form's provider list, with a required
   `watch_dir` field and optional `account_hint` field prompted the same
   way `webdriver`'s `login_url` already was — GitHub issue #32.
+- **D29 — Statement sources auto-discovered from `~/Statements/<Institution>/<Account>`**
+  (§6.3, Phase K, tasks 38–41): task 37 made adding a `statement_import`
+  source possible through the UI, but each one still had to be added by
+  hand, one directory at a time. This decision adopts a fixed directory
+  convention — one leaf directory per account, matching the existing
+  one-`watch_dir`-per-source model exactly — and scans it once per
+  process at CLI startup, `add_source`-ing a new `SourceConfig` for every
+  leaf not already registered by `watch_dir`. Root path (`~/Statements`)
+  is fixed, not configurable in v1, same precedent as `storage_dir` (D17).
+  A directory added while obol is already running (mid Sources↔Dashboard
+  loop) isn't picked up until the next invocation — same "one-shot
+  synchronous CLI, no background watcher" reasoning as D28's decision to
+  skip a `notify` dependency. Discovery never removes a source if its
+  directory later disappears — same scope boundary as the rest of this
+  module. **Category is determined from the statement's own content, not
+  the directory name** (explicit user direction, since a directory name
+  alone can't reliably say asset vs. liability) — `ParsedStatement` gained
+  a `category` field; Vanguard/Fidelity hardcode `Asset` (no liability
+  products in this app's scope, §7); Chase detects via generic
+  credit-card terminology. **The Chase heuristic is explicitly unverified
+  against a real credit-card statement** — only Chase's checking layout
+  was ever confirmed against real statement wording (D28's addendum) —
+  unlike the rest of this module's real-structure-verified parsing logic.
+  A leaf whose statement can't be parsed, or whose institution has no
+  registered parser, is skipped and warned about, not treated as fatal —
+  one bad leaf must never block discovering the rest of the tree.
+  **Addendum**: content stays the primary category signal, but when it
+  lands on the uncertain `Asset` default, a small generic keyword check
+  against the newest statement's filename (`credit`, `card`, `visa`,
+  `mastercard`, `amex`, `loan`, `mortgage`) can push it to `Liability` as
+  a tiebreak — this only ever pushes toward `Liability`, never away from
+  a positive content match, and applies uniformly rather than
+  institution-specific (harmless for Vanguard/Fidelity in practice, and
+  arguably useful defense-in-depth if a statement is ever misfiled).

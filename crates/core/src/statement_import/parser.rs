@@ -8,6 +8,7 @@
 use crate::statement_import::chase::ChaseStatementParser;
 use crate::statement_import::fidelity::FidelityStatementParser;
 use crate::statement_import::vanguard::VanguardStatementParser;
+use crate::Category;
 
 /// What `StatementImportProvider::fetch` expects to find in a
 /// statement, derived from the calling `SourceConfig` — lets a parser
@@ -35,6 +36,14 @@ pub struct ParsedStatement {
     /// hashed into an `account_key` by the caller
     /// (`hash_account_number`), never persisted raw.
     pub account_identifier: String,
+    /// Asset or liability, determined from the statement's own content
+    /// rather than any directory-naming convention — used by
+    /// `discovery::discover_statement_sources` (spec D29) to decide
+    /// `SourceConfig.category` for a newly auto-discovered source. Not
+    /// consulted by `StatementImportProvider::fetch()`'s regular per-run
+    /// path, since an existing source's category is already fixed at
+    /// add-time, same as every other provider.
+    pub category: Category,
 }
 
 #[derive(Debug, PartialEq)]

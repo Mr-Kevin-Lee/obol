@@ -17,6 +17,7 @@
 //! caveat already noted for this synthetic fixture.
 
 use crate::statement_import::parser::{ExpectedAccount, ParseError, ParsedStatement, StatementParser};
+use crate::Category;
 
 pub struct ChaseStatementParser;
 
@@ -53,6 +54,7 @@ impl StatementParser for ChaseStatementParser {
                     balance: account.balance,
                     as_of_date: extract_statement_date(text).unwrap_or_default(),
                     account_identifier: account.last4.clone(),
+                    category: detect_category(text),
                 })
             }
             _ => Err(ParseError::AmbiguousMatch),
@@ -119,6 +121,31 @@ fn extract_statement_date(text: &str) -> Option<String> {
         .take_while(|c| c.is_ascii_digit() || *c == '/')
         .collect();
     (!raw.is_empty()).then_some(raw)
+}
+
+/// Chase is the only institution this app supports (spec FR1) with both
+/// asset (checking/savings) and liability (credit card) statements, so
+/// unlike Vanguard/Fidelity — which never need this at all — a Chase
+/// statement's category can't be assumed from the institution alone.
+///
+/// **Unverified heuristic**: checks for generic, universal credit-card
+/// statement terminology, not anything modeled on a real Chase
+/// credit-card layout — only Chase's *checking* statement structure was
+/// confirmed against real statement wording (see this file's own
+/// module-level caveat above). A real Chase credit-card statement has
+/// never been seen while building this parser.
+fn detect_category(text: &str) -> Category {
+    const LIABILITY_MARKERS: &[&str] =
+        &["Minimum Payment Due", "Credit Limit", "Available Credit"];
+    let lower = text.to_lowercase();
+    let is_liability = LIABILITY_MARKERS
+        .iter()
+        .any(|marker| lower.contains(&marker.to_lowercase()));
+    if is_liability {
+        Category::Liability
+    } else {
+        Category::Asset
+    }
 }
 
 #[cfg(test)]
@@ -196,5 +223,35 @@ mod tests {
 
         assert_eq!(result.balance, 1234.56);
         assert_eq!(result.as_of_date, "");
+    }
+
+    #[test]
+    fn a_checking_statement_is_categorized_as_an_asset() {
+        let text = "CHASE\nChase Checking Statement\nAccount ending in 6789\n\
+                     Statement Date: 06/30/2026\nNew Balance $1,234.56\n";
+
+        let result = ChaseStatementParser.parse(text, &expected(None)).unwrap();
+
+        assert_eq!(result.category, Category::Asset);
+    }
+
+    #[test]
+    fn a_statement_with_credit_card_terminology_is_categorized_as_a_liability() {
+        let text = "CHASE\nAccount ending in 6789\nNew Balance $1,234.56\n\
+                     Minimum Payment Due $35.00\nCredit Limit $10,000.00\n";
+
+        let result = ChaseStatementParser.parse(text, &expected(None)).unwrap();
+
+        assert_eq!(result.category, Category::Liability);
+    }
+
+    #[test]
+    fn credit_card_terminology_is_matched_case_insensitively() {
+        let text = "CHASE\nAccount ending in 6789\nNew Balance $1,234.56\n\
+                     minimum payment due $35.00\n";
+
+        let result = ChaseStatementParser.parse(text, &expected(None)).unwrap();
+
+        assert_eq!(result.category, Category::Liability);
     }
 }

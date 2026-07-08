@@ -45,8 +45,8 @@ pub use retry::{with_retry, RetryConfig, RetryableError};
 pub use snapshot::{AccountRecord, Category, Snapshot, Status};
 pub use sources::{add_source, edit_source, load_or_init, remove_source, SourcesError};
 pub use statement_import::{
-    extract_text, parser_for, ExpectedAccount, ExtractError, ParseError, ParsedStatement,
-    ProcessedFilesLedger, StatementImportProvider, StatementParser,
+    discover_statement_sources, extract_text, parser_for, ExpectedAccount, ExtractError,
+    ParseError, ParsedStatement, ProcessedFilesLedger, StatementImportProvider, StatementParser,
 };
 pub use statement_import_storage::{
     load_or_init_processed_files, save_processed_files, ProcessedFilesStorageError,

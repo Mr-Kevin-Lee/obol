@@ -13,16 +13,22 @@
 //! - `vanguard`, `fidelity` — sibling `StatementParser` implementations,
 //!   added the same way `chase` was: one new module + one match arm in
 //!   `parser::parser_for`.
+//! - [`discovery`] — auto-discovers new `statement_import` sources from
+//!   a fixed `<root>/<Institution>/<Account>` directory convention
+//!   (spec D29), rather than requiring each one to be added by hand
+//!   through the Sources screen.
 //!
 //! `StatementImportProvider` below ties these into the `Provider` trait.
 
 mod chase;
+mod discovery;
 mod fidelity;
 mod parser;
 mod pdf_text;
 mod processed_files;
 mod vanguard;
 
+pub use discovery::discover_statement_sources;
 pub use parser::{parser_for, ExpectedAccount, ParseError, ParsedStatement, StatementParser};
 pub use pdf_text::{extract_text, ExtractError};
 pub use processed_files::ProcessedFilesLedger;

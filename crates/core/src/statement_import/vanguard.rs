@@ -27,6 +27,7 @@
 //! immediately after it.
 
 use crate::statement_import::parser::{ExpectedAccount, ParseError, ParsedStatement, StatementParser};
+use crate::Category;
 
 pub struct VanguardStatementParser;
 
@@ -66,6 +67,10 @@ impl StatementParser for VanguardStatementParser {
                         .account_id
                         .clone()
                         .unwrap_or_else(|| section.balance.to_string()),
+                    // Vanguard has no liability products in this app's
+                    // scope (spec FR1: brokerage/529/money-market are
+                    // always assets) — no statement inspection needed.
+                    category: Category::Asset,
                 })
             }
             _ => Err(ParseError::AmbiguousMatch),
@@ -236,6 +241,7 @@ mod tests {
         assert_eq!(result.balance, 50000.00);
         assert_eq!(result.as_of_date, "March 31, 2026");
         assert_eq!(result.account_identifier, "XXXXX1234-01");
+        assert_eq!(result.category, Category::Asset);
     }
 
     #[test]

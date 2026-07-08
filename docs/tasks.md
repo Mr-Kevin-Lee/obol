@@ -205,3 +205,54 @@ practice, so no separate Morgan Stanley parser is planned.
     `watch_dir` is an error, missing `account_hint` is not,
     `to_source_config` embeds both fields into `provider_config`
     correctly (including omitting `account_hint` when absent).
+
+## Phase K — Statement auto-discovery (`~/Statements/<Institution>/<Account>`)
+
+Decided post-v0.1 (D29): tasks 28–37 made statement import a fully
+first-class provider, but every source still had to be added by hand,
+one directory at a time. This phase adopts a fixed directory convention
+and auto-creates sources from it, closing that gap the same way task 37
+closed the "no way to add one" gap.
+
+38. `ParsedStatement` gains a `category: Category` field, determined by
+    the statement's own content rather than any directory-naming
+    convention. `VanguardStatementParser`/`FidelityStatementParser`
+    hardcode `Category::Asset` (neither institution has liability
+    products in this app's scope, §7). `ChaseStatementParser` gets a new
+    `detect_category` heuristic — generic, universal credit-card
+    terminology (`"Minimum Payment Due"`, `"Credit Limit"`, `"Available
+    Credit"`) → `Liability`, else `Asset`. Documented explicitly as an
+    unverified heuristic, unlike the rest of this module's
+    real-structure-verified parsing logic — only Chase's *checking*
+    layout was ever confirmed against real statement wording.
+    Tests: category assertions added to each parser's existing
+    happy-path tests, plus dedicated Chase liability-keyword-detection
+    cases (case-insensitive match included). Synthetic fixture text
+    only, same standing rule as every other test in this module.
+39. `discover_statement_sources(statements_root, existing_sources)` in
+    new `crates/core/src/statement_import/discovery.rs` — walks
+    `<root>/<Institution>/<Account>` two levels deep, skips leaves whose
+    `watch_dir` is already registered, skips unrecognized institutions/
+    empty leaves/unparseable statements (warned, not fatal — one bad
+    leaf never blocks the rest of the scan), returns ready-to-add
+    `SourceConfig`s with a generated `{institution}_{account}` id. Also
+    applies a filename-based liability tiebreak: content stays the
+    primary signal, but when it lands on the uncertain `Asset` default,
+    a generic keyword check against the newest PDF's filename (`credit`,
+    `card`, `visa`, `mastercard`, `amex`, `loan`, `mortgage`) can push it
+    to `Liability` — never the reverse.
+    Tests: happy path; already-known `watch_dir` not rediscovered;
+    unrecognized institution skipped; empty leaf skipped; a leaf whose
+    statement fails to parse skipped; multiple new leaves in one pass
+    all discovered with distinct ids; missing root returns an empty
+    list, not an error; a stray file directly under the root skipped; a
+    third nesting level never walked into; a liability-hinting filename
+    overrides an Asset default; a plain filename leaves it unaffected.
+40. Wire into `crates/cli/src/main.rs`: new `statements_root()` (fixed
+    `~/Statements`, mirrors `storage_dir()`'s D17 precedent), called
+    once per process right after the first `load_or_init` and before
+    `determine_mode` — each discovered source is `add_source`'d and
+    pushed into the in-memory `sources` list. Wiring only, verified
+    manually against a real `~/Statements` tree end-to-end (same
+    carve-out as task 34's `register_statement_import`).
+41. `docs/spec.md` D29 decision record + this Phase K entry.
