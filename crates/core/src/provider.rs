@@ -93,10 +93,13 @@ pub trait Provider: Send + Sync {
 pub type ProviderFactory = Box<dyn Fn() -> Box<dyn Provider> + Send + Sync>;
 
 /// Maps a source's `provider:` string to a factory for that provider.
-/// Empty for now — each provider registers itself as it's built
-/// (`manual_entry` in task 15, `plaid` in task 18, `webdriver` later).
-/// This task defines the registry mechanism itself; the contract is
-/// tested against fakes registered ad hoc in tests, not real providers.
+/// Empty for now, deliberately — `PlaidProvider` exists but needs a
+/// `PlaidClient` built from runtime credentials this zero-argument call
+/// site doesn't have, so the CLI wires it in separately, gated on
+/// whether those credentials are actually configured; `manual_entry`/
+/// `webdriver` don't exist yet. This function defines the registry
+/// mechanism itself; the contract is tested against fakes registered ad
+/// hoc in tests, not real providers.
 pub fn provider_registry() -> HashMap<&'static str, ProviderFactory> {
     HashMap::new()
 }
