@@ -224,7 +224,7 @@ fn source_list_item(
 
 fn health_for(source: &SourceConfig, recent: &[Snapshot]) -> String {
     let Some(latest) = recent.first() else {
-        return "Never fetched".to_string();
+        return "No snapshot yet — press 'v' to fetch".to_string();
     };
     match latest.accounts.iter().find(|r| r.source_id() == source.id) {
         Some(record) if record.status() == Status::Ok => "OK".to_string(),
@@ -232,7 +232,10 @@ fn health_for(source: &SourceConfig, recent: &[Snapshot]) -> String {
             "Failed: {}",
             record.error_message().unwrap_or("unknown error")
         ),
-        None => "Never fetched".to_string(),
+        // Distinct from the no-snapshot-at-all case above: a snapshot
+        // exists, but this particular source wasn't in it — e.g. it was
+        // just added (by hand or auto-discovered) since the last fetch.
+        None => "New — not included in the last fetch yet, press 'v' to fetch".to_string(),
     }
 }
 
