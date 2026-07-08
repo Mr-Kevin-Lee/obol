@@ -42,12 +42,19 @@ pub enum DashboardAction {
 /// then restores the terminal. Terminal setup/teardown is the one part
 /// of this module that can't be unit-tested — a real terminal is being
 /// taken over.
-pub fn run(snapshot: &Snapshot) -> io::Result<DashboardAction> {
+///
+/// `previous` is the most recently saved snapshot *before* this run
+/// (captured by the caller ahead of calling `run_and_save`, so it's
+/// unambiguous regardless of whether this run's own save succeeds) —
+/// used only to show "+$X since <date>" under the net worth figure.
+/// `None` on a first-ever run, or if the previous snapshot's net worth
+/// wasn't computable either (nothing meaningful to diff against).
+pub fn run(snapshot: &Snapshot, previous: Option<&Snapshot>) -> io::Result<DashboardAction> {
     enable_raw_mode()?;
     io::stdout().execute(EnterAlternateScreen)?;
     let mut terminal = Terminal::new(CrosstermBackend::new(io::stdout()))?;
 
-    terminal.draw(|frame| draw(frame, snapshot))?;
+    terminal.draw(|frame| draw(frame, snapshot, previous))?;
     let action = loop {
         let Event::Key(key) = event::read()? else {
             continue;
@@ -66,12 +73,12 @@ pub fn run(snapshot: &Snapshot) -> io::Result<DashboardAction> {
     Ok(action)
 }
 
-fn draw(frame: &mut Frame, snapshot: &Snapshot) {
+fn draw(frame: &mut Frame, snapshot: &Snapshot, previous: Option<&Snapshot>) {
     let areas = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
             Constraint::Length(3), // title
-            Constraint::Length(3), // net worth
+            Constraint::Length(4), // net worth + change-since-last-run
             Constraint::Min(3),    // assets
             Constraint::Min(3),    // liabilities
             Constraint::Length(1), // footer
@@ -79,7 +86,7 @@ fn draw(frame: &mut Frame, snapshot: &Snapshot) {
         .split(frame.area());
 
     draw_title(frame, areas[0]);
-    draw_net_worth(frame, areas[1], &snapshot.accounts);
+    draw_net_worth(frame, areas[1], snapshot, previous);
     draw_group(
         frame,
         areas[2],
@@ -104,8 +111,10 @@ fn draw_title(frame: &mut Frame, area: Rect) {
     frame.render_widget(title, area);
 }
 
-fn draw_net_worth(frame: &mut Frame, area: Rect, accounts: &[AccountRecord]) {
-    let line = match obol_core::calculate_net_worth_from_records(accounts) {
+fn draw_net_worth(frame: &mut Frame, area: Rect, snapshot: &Snapshot, previous: Option<&Snapshot>) {
+    let current_net_worth = obol_core::calculate_net_worth_from_records(&snapshot.accounts);
+
+    let mut lines = vec![match current_net_worth {
         NetWorth::Computed(total) => Line::from(vec![
             Span::raw("Net worth: "),
             Span::styled(
@@ -119,8 +128,52 @@ fn draw_net_worth(frame: &mut Frame, area: Rect, accounts: &[AccountRecord]) {
             format!("Net worth unavailable — 0/{total_sources} sources returned data this run"),
             Style::default().fg(VERMILLION).add_modifier(Modifier::BOLD),
         )),
+    }];
+
+    if let Some(change) = change_since_previous(current_net_worth, previous) {
+        lines.push(change);
+    }
+
+    frame.render_widget(Paragraph::new(lines), area);
+}
+
+/// "+$X.XX since <date>" (or "-$X.XX"), comparing today's net worth to
+/// the previous saved snapshot's — a deliberately simple stand-in for
+/// spec §13's stretch-goal trend chart, not the chart itself. `None`
+/// whenever a meaningful diff isn't possible: no previous snapshot yet
+/// (first-ever run), or either snapshot's net worth wasn't computable
+/// (§9.1 — diffing against/from an "unavailable" figure would be
+/// misleading, not just unhelpful).
+fn change_since_previous(current: NetWorth, previous: Option<&Snapshot>) -> Option<Line<'static>> {
+    let NetWorth::Computed(current_total) = current else {
+        return None;
     };
-    frame.render_widget(Paragraph::new(line), area);
+    let previous = previous?;
+    let NetWorth::Computed(previous_total) =
+        obol_core::calculate_net_worth_from_records(&previous.accounts)
+    else {
+        return None;
+    };
+
+    let delta = current_total - previous_total;
+    let color = if delta > 0.0 {
+        BLUISH_GREEN
+    } else if delta < 0.0 {
+        VERMILLION
+    } else {
+        BLUE
+    };
+    let sign = if delta >= 0.0 { "+" } else { "-" };
+    let date = previous
+        .created_at
+        .split('T')
+        .next()
+        .unwrap_or(&previous.created_at);
+
+    Some(Line::from(Span::styled(
+        format!("{sign}${:.2} since {date}", delta.abs()),
+        Style::default().fg(color),
+    )))
 }
 
 fn draw_group(

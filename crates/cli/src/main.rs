@@ -230,6 +230,15 @@ async fn run_screen_loop(
                         std::process::exit(1);
                     }
                 };
+                // Captured before run_and_save's own save happens, so
+                // it's unambiguous regardless of whether that save
+                // succeeds — "the most recent snapshot from before this
+                // run," not "whatever's now newest on disk."
+                let previous = obol_core::load_recent_snapshots(snapshots_dir, 1)
+                    .unwrap_or_default()
+                    .into_iter()
+                    .next();
+
                 let mut registry = obol_core::provider_registry();
                 maybe_register_plaid(&mut registry);
                 register_statement_import(&mut registry, processed_statements_path);
@@ -244,7 +253,7 @@ async fn run_screen_loop(
                     eprintln!("warning: this run's data was not saved to history: {err}");
                 }
 
-                match dashboard::run(&result.snapshot) {
+                match dashboard::run(&result.snapshot, previous.as_ref()) {
                     Ok(dashboard::DashboardAction::Quit) => return,
                     Ok(dashboard::DashboardAction::GoToSources) => Screen::Sources,
                     Err(err) => {
