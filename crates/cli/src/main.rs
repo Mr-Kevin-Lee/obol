@@ -59,6 +59,26 @@ fn maybe_register_plaid(
     );
 }
 
+/// Registers the statement-import provider (spec §6.3, D28) —
+/// unconditional, unlike `maybe_register_plaid`, since this provider
+/// reads local files rather than calling an external API and so has no
+/// credentials to gate on. Needs only a path for its processed-files
+/// ledger, which lives alongside `item_usage.json` under the storage
+/// directory.
+fn register_statement_import(
+    registry: &mut std::collections::HashMap<&'static str, obol_core::ProviderFactory>,
+    processed_statements_path: &std::path::Path,
+) {
+    let ledger_path = processed_statements_path.to_path_buf();
+    registry.insert(
+        "statement_import",
+        Box::new(move || {
+            Box::new(obol_core::StatementImportProvider::new(ledger_path.clone()))
+                as Box<dyn obol_core::Provider>
+        }),
+    );
+}
+
 #[derive(Parser)]
 #[command(
     name = "obol",
@@ -126,6 +146,7 @@ async fn main() {
     init_audit_log(&storage_dir);
     let sources_path = storage_dir.join("sources.yaml");
     let item_usage_path = storage_dir.join("item_usage.json");
+    let processed_statements_path = storage_dir.join("processed_statements.json");
     let snapshots_dir = storage_dir.join("snapshots");
     let sources = match obol_core::load_or_init(&sources_path) {
         Ok(sources) => sources,
@@ -143,6 +164,7 @@ async fn main() {
                 Screen::Sources,
                 &sources_path,
                 &item_usage_path,
+                &processed_statements_path,
                 &snapshots_dir,
             )
             .await;
@@ -152,6 +174,7 @@ async fn main() {
                 Screen::Dashboard,
                 &sources_path,
                 &item_usage_path,
+                &processed_statements_path,
                 &snapshots_dir,
             )
             .await;
@@ -184,6 +207,7 @@ async fn run_screen_loop(
     mut screen: Screen,
     sources_path: &std::path::Path,
     item_usage_path: &std::path::Path,
+    processed_statements_path: &std::path::Path,
     snapshots_dir: &std::path::Path,
 ) {
     loop {
@@ -208,6 +232,7 @@ async fn run_screen_loop(
                 };
                 let mut registry = obol_core::provider_registry();
                 maybe_register_plaid(&mut registry);
+                register_statement_import(&mut registry, processed_statements_path);
                 let credential_source = NoInteractiveProvidersYet;
 
                 let result =

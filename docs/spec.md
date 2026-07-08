@@ -390,6 +390,34 @@ interface (§14, D7) implements it as a form post. This is what lets both
 front ends share `core::snapshot::run()` unchanged, consistent with
 §6.1's "same core, two interfaces."
 
+### 6.3 Statement import (parked/parallel alternative)
+
+A third `Provider` implementation (decision D28, §16), alongside Plaid and
+WebDriver: parses the current balance out of a PDF statement the user has
+already downloaded (manually, or auto-saved via a Mail rule — that plumbing
+is outside this app) into a per-source directory
+(`provider_config.watch_dir`).
+
+- **Scans on each `fetch()` call, no background watcher.** §6.2's flow is
+  already synchronous (load → fetch → save → render, one invocation), so
+  there's nothing for a filesystem watcher to add — the provider just lists
+  `watch_dir` for unprocessed files each time it's called, the same way
+  Plaid makes a live API call each time. No `notify`-crate dependency.
+- **One directory = one account** (same one-source-one-account convention
+  as D23), disambiguated via an optional `account_number_last4` in
+  `provider_config` when a single statement covers multiple accounts at
+  the same institution.
+- **PII handling matches §11.1's existing rule exactly:** the raw account
+  number/holder name a statement PDF contains are read into memory only
+  long enough to derive the hashed `account_key` (same
+  `hash_account_number` call `PlaidProvider` already uses) — never
+  persisted, and the source PDF itself is never copied or archived by the
+  app. The user's own dropbox directory remains the only copy.
+- **Does not touch §3's "not a transaction-level budgeting tool"
+  non-goal.** This provider extracts one balance figure per statement,
+  never per-transaction detail — no categorization or trend abstraction
+  is introduced anywhere in this design.
+
 ## 7. Data source strategy
 
 Per your direction: **aggregator where a free option exists, browser automation
@@ -404,6 +432,11 @@ otherwise.**
 | Apple Card (Goldman Sachs) | Credit card | **Manual entry** for v1; browser automation is a real future option | Has a web portal at card.apple.com (corrected — originally assumed no portal existed). No third-party API access to it exists, so v1 stays manual entry (D3) rather than adding complexity for one account — but unlike student loans/mortgage (no servicer chosen yet), a concrete WebDriver spike target now exists if that ever gets revisited. Recommend a simple "enter balance" panel for now. |
 | Student loans (stretch) | TBD | Browser automation | Servicer TBD; revisit once selected |
 | Mortgage (stretch) | TBD | Browser automation | Servicer TBD |
+
+Statement import (PDF dropbox, §6.3, D28) is a parked/parallel alternate
+path for any institution above — not a replacement for the recommended
+path in the table, just an option `sources.yaml` can pick per source when
+live automation isn't practical. Chase is the reference implementation.
 
 **Why Plaid first:** Plaid offers a free Trial plan for new US/Canada teams
 supporting up to 10 live Production accounts with real data — comfortably
@@ -1335,3 +1368,66 @@ Previously open questions, now resolved:
   per-Item billed product but waived under the Trial plan (D22, §7), so
   requesting it at Link time doesn't reopen the cost question D22
   settled.
+- **D27 — WebDriver automation hands off login to the human, then takes
+  over the authenticated session** (§7, §8, §14, §15): decided while
+  running the fantoccini spike (task 21) against Vanguard's real login
+  page. Scripting the login itself hit real, expected friction —
+  Vanguard's Angular-based form didn't register a WebDriver-simulated
+  click on its submit button (traced to a duplicate DOM `id` shared
+  between an outer `<c11n-button>` custom element and the real inner
+  `<button>` — `getElementById` silently grabbed the wrong one) — but
+  more fundamentally, a modern bank login form (plus whatever MFA/
+  CAPTCHA it shows) is exactly the class of anti-automation-hardened
+  surface this project has no need to fight at all, since a human is
+  always present whenever this tool runs. The spike now opens a real
+  browser window, prints instructions, and blocks (Enter key in the
+  CLI) while the human logs in manually — including MFA — then
+  continues automating the *same authenticated session* afterward (only
+  reading a balance, not touching the login form). No bank credentials
+  ever pass through this program at all in this design, not even
+  transiently — they're typed directly into the real browser window.
+  **Generalizes to the future local HTTP interface (§6.1, v0.3)
+  unchanged in mechanism** — the WebDriver-launched browser window is
+  always a separate, real OS-level window regardless of which interface
+  triggered it; only the "tell the app you're done logging in" signal
+  changes shape (a terminal Enter key now, a button in the web page
+  later), the same interface-agnostic split already established by the
+  `CredentialSource` trait (D12) and Plaid Link's own polling-until-
+  complete pattern (D18).
+- **D28 — Vanguard/Morgan Stanley/Fidelity (and optionally Chase) gain a
+  "statement dropbox" path as a parked/parallel alternative to WebDriver
+  automation, not a replacement for it** (§6.3, §7): decided after D27's
+  WebDriver spike proved viable in principle but before extending it to
+  every remaining institution. A user-maintained directory of
+  manually-downloaded (or Mail-rule-saved — that plumbing is out of scope
+  here) PDF statements is scanned by a new `statement_import` `Provider`
+  on every run, extracting only the current balance (and as-of date) via
+  plain-text PDF extraction (`pdf-extract`, no OCR — these are digitally
+  generated statements, not scans) and per-institution parsing logic
+  behind a small `StatementParser` trait. Chase is built first as the
+  reference implementation (simpler retail-statement layout);
+  Vanguard/Morgan Stanley/Fidelity follow as repeatable, independent
+  follow-on work — each is one new `StatementParser` impl plus one new
+  match arm, no changes to the `Provider` trait, the snapshot engine, or
+  storage. Explicitly does **not** touch §3's "not a transaction-level
+  budgeting tool" non-goal — this provider extracts a single balance
+  figure per statement, never per-transaction detail, and no
+  categorization/trend abstraction is introduced anywhere in this
+  design. The existing `webdriver` provider (D27) is retained as a
+  parallel option per institution, not deprecated — `sources.yaml`'s
+  `provider:` field lets each source independently choose `plaid`,
+  `webdriver`, or `statement_import` as fits that institution best.
+  **Addendum**: `VanguardStatementParser` and `FidelityStatementParser`
+  were built as the planned follow-on work, checked against real
+  statement structure (field labels and section headers only — no real
+  balances, account numbers, names, or addresses were ever copied into
+  code, comments, or test fixtures; only synthetic placeholder values
+  appear anywhere in the parser or its tests). This also surfaced that
+  `ExpectedAccount`'s disambiguator field needed a more general name and
+  meaning than Chase's `last4: Option<String>` — renamed to
+  `account_hint: Option<String>`, since Fidelity NetBenefits statements
+  carry no account number at all, only a plan/employer name (matched as
+  a case-insensitive substring). Morgan Stanley's originally-tentative
+  row (§7) turned out in practice to be covered by a Fidelity
+  NetBenefits statement, so no separate Morgan Stanley parser is
+  planned.

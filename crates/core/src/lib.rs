@@ -14,6 +14,8 @@ mod provider;
 mod retry;
 mod snapshot;
 mod sources;
+mod statement_import;
+mod statement_import_storage;
 mod storage;
 
 pub use account::{Account, AccountStatus, Asset, Liability};
@@ -42,4 +44,11 @@ pub use provider::{
 pub use retry::{with_retry, RetryConfig, RetryableError};
 pub use snapshot::{AccountRecord, Category, Snapshot, Status};
 pub use sources::{add_source, edit_source, load_or_init, remove_source, SourcesError};
+pub use statement_import::{
+    extract_text, parser_for, ExpectedAccount, ExtractError, ParseError, ParsedStatement,
+    ProcessedFilesLedger, StatementImportProvider, StatementParser,
+};
+pub use statement_import_storage::{
+    load_or_init_processed_files, save_processed_files, ProcessedFilesStorageError,
+};
 pub use storage::{load_recent_snapshots, load_snapshot, save_snapshot, StorageError};

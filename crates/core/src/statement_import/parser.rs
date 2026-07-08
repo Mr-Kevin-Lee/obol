@@ -1,0 +1,123 @@
+//! `StatementParser` trait (spec §6.3, D28) — per-institution statement
+//! text parsing, implemented once per institution (`chase.rs` is the
+//! reference implementation; `vanguard.rs`/`fidelity.rs` followed once
+//! real statement layouts were available to check against; more
+//! institutions are added the same way — a new sibling module plus one
+//! new match arm in [`parser_for`], with no changes needed here).
+
+use crate::statement_import::chase::ChaseStatementParser;
+use crate::statement_import::fidelity::FidelityStatementParser;
+use crate::statement_import::vanguard::VanguardStatementParser;
+
+/// What `StatementImportProvider::fetch` expects to find in a
+/// statement, derived from the calling `SourceConfig` — lets a parser
+/// disambiguate when a single statement covers multiple accounts at the
+/// same institution.
+pub struct ExpectedAccount {
+    pub account_type: String,
+    /// Free-form disambiguator, interpreted differently per
+    /// institution: a last-4 digit string for bank/brokerage-style
+    /// statements (Chase, Vanguard), or a plan/employer-name substring
+    /// for statements with no account number at all (Fidelity
+    /// NetBenefits has none — just a plan name like "Apple 401(k)
+    /// Plan"). `None` means "there's only one account in this
+    /// statement, don't disambiguate."
+    pub account_hint: Option<String>,
+}
+
+/// A successfully parsed statement — one balance, for one account.
+#[derive(Debug)]
+pub struct ParsedStatement {
+    pub balance: f64,
+    pub as_of_date: String,
+    /// Stable raw identifier for this account (last-4, a full account
+    /// number, or a plan name if that's all a statement exposes) —
+    /// hashed into an `account_key` by the caller
+    /// (`hash_account_number`), never persisted raw.
+    pub account_identifier: String,
+}
+
+#[derive(Debug, PartialEq)]
+pub enum ParseError {
+    /// The statement was recognized, but no account in it matched
+    /// `ExpectedAccount` (wrong hint, or a genuinely different
+    /// account).
+    NoMatchingAccount,
+    /// More than one account in the statement matched, and no hint was
+    /// given to disambiguate.
+    AmbiguousMatch,
+    /// The text didn't match any pattern this parser recognizes at all
+    /// — likely a parser bug or a statement layout change.
+    UnrecognizedLayout(String),
+}
+
+/// Parses already-extracted plain text (never a PDF path/bytes — see
+/// `pdf_text.rs`) into a balance + as-of date + account identifier.
+/// Implementations stay pure/synchronous so they're trivially
+/// unit-testable against string-literal fixtures, independent of
+/// `pdf-extract`'s actual runtime behavior.
+pub trait StatementParser: Send + Sync {
+    /// Institution key this parser handles — self-documentation only;
+    /// [`parser_for`] is the single source of truth for dispatch, so
+    /// the two can't disagree.
+    fn institution(&self) -> &'static str;
+
+    fn parse(
+        &self,
+        text: &str,
+        expected: &ExpectedAccount,
+    ) -> Result<ParsedStatement, ParseError>;
+}
+
+/// Selects the `StatementParser` for a `SourceConfig.institution`
+/// value (matched case-insensitively, since existing `institution`
+/// values elsewhere in this codebase are capitalized for display —
+/// e.g. `PlaidProvider`'s tests use `"Chase"` — while this is also used
+/// as a dispatch key here). A plain match, not a dynamic registry: this
+/// is a small, fixed, compile-time set of parsers, not a plugin system.
+/// Adding another institution later means adding one new match arm
+/// here, nothing else.
+pub fn parser_for(institution: &str) -> Option<Box<dyn StatementParser>> {
+    match institution.to_lowercase().as_str() {
+        "chase" => Some(Box::new(ChaseStatementParser)),
+        "vanguard" => Some(Box::new(VanguardStatementParser)),
+        "fidelity" => Some(Box::new(FidelityStatementParser)),
+        _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn chase_resolves_to_the_chase_parser() {
+        let parser = parser_for("chase").unwrap();
+        assert_eq!(parser.institution(), "chase");
+    }
+
+    #[test]
+    fn vanguard_resolves_to_the_vanguard_parser() {
+        let parser = parser_for("vanguard").unwrap();
+        assert_eq!(parser.institution(), "vanguard");
+    }
+
+    #[test]
+    fn fidelity_resolves_to_the_fidelity_parser() {
+        let parser = parser_for("fidelity").unwrap();
+        assert_eq!(parser.institution(), "fidelity");
+    }
+
+    #[test]
+    fn institution_matching_is_case_insensitive() {
+        assert!(parser_for("Chase").is_some());
+        assert!(parser_for("CHASE").is_some());
+        assert!(parser_for("Vanguard").is_some());
+        assert!(parser_for("Fidelity").is_some());
+    }
+
+    #[test]
+    fn an_unrecognized_institution_resolves_to_none() {
+        assert!(parser_for("some_bank_nobody_has_written_a_parser_for").is_none());
+    }
+}
