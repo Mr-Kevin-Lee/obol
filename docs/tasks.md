@@ -196,3 +196,12 @@ practice, so no separate Morgan Stanley parser is planned.
     plan, multi-plan disambiguation via `account_hint`, no matching
     plan, ambiguous match, unrecognized layout, missing statement period
     doesn't block a valid balance.
+37. Sources screen support for `statement_import` (closes the FR5 gap:
+    tasks 28–36 built the provider but left no way to actually add one
+    through the UI). Adds `statement_import` to `PROVIDER_OPTIONS`, a
+    required `watch_dir` field and optional `account_hint` field to the
+    generic add/edit form, mirroring `webdriver`'s `login_url` pattern.
+    Tests: `form.rs` — valid form has no errors, missing/blank
+    `watch_dir` is an error, missing `account_hint` is not,
+    `to_source_config` embeds both fields into `provider_config`
+    correctly (including omitting `account_hint` when absent).

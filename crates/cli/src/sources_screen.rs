@@ -1,7 +1,8 @@
 //! The Sources screen (spec §10.1, §13): list configured sources with
 //! health + the Plaid Item usage indicator, generic add/edit/remove
-//! forms for the two non-Plaid providers, and a real "Connect via
-//! Plaid" Hosted Link flow (task 25). No unit-test mandate for
+//! forms for the three non-Plaid providers (`manual_entry`,
+//! `webdriver`, `statement_import`), and a real "Connect via Plaid"
+//! Hosted Link flow (task 25). No unit-test mandate for
 //! rendering/interaction (§5) — the validation logic it calls into
 //! (`form.rs`) is what's actually unit-tested; this module is verified
 //! manually against the running TUI.
@@ -278,6 +279,16 @@ fn edit_flow(
         webdriver_login_url: source
             .provider_config
             .get("login_url")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string()),
+        watch_dir: source
+            .provider_config
+            .get("watch_dir")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string()),
+        account_hint: source
+            .provider_config
+            .get("account_hint")
             .and_then(|v| v.as_str())
             .map(|s| s.to_string()),
     };
@@ -665,6 +676,10 @@ const PROVIDER_OPTIONS: &[(&str, &str)] = &[
         "webdriver",
         "Browser automation — logs in to a bank website for you",
     ),
+    (
+        "statement_import",
+        "Statement dropbox — reads the balance out of PDF statements you drop in a folder",
+    ),
 ];
 
 const CATEGORY_OPTIONS: &[(&str, &str)] = &[
@@ -680,8 +695,11 @@ const CATEGORY_OPTIONS: &[(&str, &str)] = &[
 /// partway through). Each field is validated as it's entered
 /// (`prompt_line_validated`) — an invalid value re-prompts *that* field
 /// only, with what was typed still there to fix, rather than discarding
-/// the whole form. `webdriver`'s extra `login_url` field is only
-/// prompted for once the provider has been picked as `"webdriver"`.
+/// the whole form. `webdriver`'s extra `login_url` field, and
+/// `statement_import`'s `watch_dir`/`account_hint` fields, are only
+/// prompted for once that provider has actually been picked —
+/// `account_hint` is the one optional field in either group, so an
+/// empty answer there means "no hint," not a validation error.
 fn gather_form_input(
     terminal: &mut Term,
     initial: &SourceFormInput,
@@ -774,6 +792,36 @@ fn gather_form_input(
     } else {
         None
     };
+    let (watch_dir, account_hint) = if provider == "statement_import" {
+        let Some(watch_dir) = prompt_line_validated(
+            terminal,
+            "directory to watch for PDF statements (e.g. /Users/you/Statements/Chase)",
+            initial.watch_dir.as_deref().unwrap_or(""),
+            |value| {
+                if value.trim().is_empty() {
+                    Err("must not be empty".to_string())
+                } else {
+                    Ok(())
+                }
+            },
+        )?
+        else {
+            return Ok(None);
+        };
+        let Some(account_hint) = prompt_line(
+            terminal,
+            "account hint (optional — last-4 digits, or an employer/plan-name substring for \
+             Fidelity NetBenefits; only needed if a statement covers more than one account)",
+            initial.account_hint.as_deref().unwrap_or(""),
+        )?
+        else {
+            return Ok(None);
+        };
+        let account_hint = (!account_hint.trim().is_empty()).then_some(account_hint);
+        (Some(watch_dir), account_hint)
+    } else {
+        (None, None)
+    };
 
     Ok(Some(SourceFormInput {
         id,
@@ -782,6 +830,8 @@ fn gather_form_input(
         account_type,
         institution,
         webdriver_login_url,
+        watch_dir,
+        account_hint,
     }))
 }
 

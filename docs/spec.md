@@ -1430,4 +1430,11 @@ Previously open questions, now resolved:
   a case-insensitive substring). Morgan Stanley's originally-tentative
   row (§7) turned out in practice to be covered by a Fidelity
   NetBenefits statement, so no separate Morgan Stanley parser is
-  planned.
+  planned. **Addendum 2**: tasks 28–36 built the provider itself but left
+  no way to actually create a `statement_import` source — the Sources
+  screen's generic add/edit form (§10.1) only accepted `manual_entry`/
+  `webdriver`, so a user could only configure statement import by
+  hand-editing `sources.yaml`, contradicting FR5. Closed by task 37:
+  `statement_import` added to the form's provider list, with a required
+  `watch_dir` field and optional `account_hint` field prompted the same
+  way `webdriver`'s `login_url` already was — GitHub issue #32.
