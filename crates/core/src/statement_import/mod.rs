@@ -52,11 +52,30 @@ use crate::{Provider, ProviderError, SourceConfig};
 /// add. No `notify`-crate dependency.
 pub struct StatementImportProvider {
     ledger_path: PathBuf,
+    /// `engine::run` instantiates one `Provider` per provider *type*,
+    /// not per source, and fetches every source concurrently
+    /// (`tokio::task::JoinSet`) — so every `statement_import` source
+    /// shares this one instance, and therefore this one
+    /// `ledger_path`. Without serializing the load→mark→save sequence,
+    /// concurrent `fetch()` calls race on it two ways: a lost update
+    /// (one source's `mark_processed` silently overwritten by
+    /// another's, since each starts from its own in-memory snapshot of
+    /// the ledger), and — observed against a real multi-account
+    /// `~/Statements` tree — `save_processed_files`'s atomic-write temp
+    /// file colliding, surfacing as a spurious "no such file or
+    /// directory" once one writer's `rename` beats another's to the
+    /// punch. This lock only ever guards this one file's
+    /// read-modify-write cycle; PDF parsing and every other source's
+    /// unrelated work still runs fully concurrently.
+    ledger_lock: tokio::sync::Mutex<()>,
 }
 
 impl StatementImportProvider {
     pub fn new(ledger_path: PathBuf) -> Self {
-        Self { ledger_path }
+        Self {
+            ledger_path,
+            ledger_lock: tokio::sync::Mutex::new(()),
+        }
     }
 }
 
@@ -94,6 +113,12 @@ impl Provider for StatementImportProvider {
             .get("account_hint")
             .and_then(|v| v.as_str())
             .map(String::from);
+
+        // Held for this whole load→mark→save sequence (see the field
+        // doc comment on `ledger_lock`) — every `statement_import`
+        // source shares this one ledger file and is fetched
+        // concurrently with every other one.
+        let _ledger_guard = self.ledger_lock.lock().await;
 
         let mut ledger = load_or_init_processed_files(&self.ledger_path).map_err(|e| {
             ProviderError::Other(format!("processed-files ledger could not be read: {e}"))

@@ -1438,6 +1438,26 @@ Previously open questions, now resolved:
   `statement_import` added to the form's provider list, with a required
   `watch_dir` field and optional `account_hint` field prompted the same
   way `webdriver`'s `login_url` already was — GitHub issue #32.
+  **Addendum 3**: testing against real statements (via D29's
+  auto-discovery, once several real accounts were configured at once)
+  surfaced two robustness bugs in `StatementImportProvider`, both fixed
+  without changing its external behavior. First, `pdf-extract` doesn't
+  just return `Err` for every malformed input — a real statement's
+  unusual font encoding made it panic outright (`unexpected encoding
+  "SymbolEncoding"`), which would otherwise crash the whole CLI process;
+  `pdf_text::extract_text` now wraps the call in `catch_unwind` and
+  turns a caught panic into an ordinary, skippable `ExtractError`.
+  Second, `engine::run` instantiates one `Provider` per provider *type*
+  (not per source) and fetches every source concurrently — so once more
+  than one `statement_import` source existed, every one of them shared
+  the same `StatementImportProvider` instance and the same
+  `processed_files.json` ledger, and concurrent `fetch()` calls raced on
+  its read-modify-write cycle (surfacing as a spurious "no such file or
+  directory" when two writers' atomic-write temp files collided, and
+  more subtly as a lost update even when they didn't crash).
+  `StatementImportProvider` now holds a `tokio::sync::Mutex` around that
+  one file's load→mark→save sequence; unrelated work (PDF parsing,
+  other sources entirely) still runs fully concurrently.
 - **D29 — Statement sources auto-discovered from `~/Statements/<Institution>/<Account>`**
   (§6.3, Phase K, tasks 38–41): task 37 made adding a `statement_import`
   source possible through the UI, but each one still had to be added by
