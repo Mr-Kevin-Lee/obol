@@ -1638,3 +1638,43 @@ Previously open questions, now resolved:
   statement's own disclosure states plainly that those values aren't
   actual held assets and aren't SIPC-protected; counting them would
   overstate real current account value.
+- **D33 — `pdftotext` fallback for `pdf-extract`'s unsupported font
+  encodings** (§6.3, Phase O): a real Chase Checking statement's fonts
+  use `SymbolEncoding`, which `pdf-extract` 0.12.0 — the latest release,
+  confirmed against its own unreleased source too — has never supported
+  at all (it only maps `MacRomanEncoding`/`MacExpertEncoding`/
+  `WinAnsiEncoding` and hard-`panic!`s on anything else). Not a bug a
+  version bump fixes. Rather than fork/patch `pdf-extract`,
+  `pdf_text::extract_text` now shells out to the `pdftotext` CLI
+  (poppler-utils) as a best-effort fallback whenever `pdf-extract` fails
+  — by panic (already caught, D28's addendum) or by `Err`. `pdftotext`
+  isn't a Cargo dependency: if it isn't installed, or fails for its own
+  reasons, the fallback quietly returns nothing and the caller reports
+  `pdf-extract`'s original error, so a machine without poppler installed
+  still gets a sensible message. Verified against the real statement
+  that surfaced this gap; not covered by an automated test (would
+  require bundling or asserting on a real `pdftotext` install in CI) —
+  same rendering-code-style carve-out as this module's terminal setup/
+  teardown (§5/D9).
+- **D34 — Chase Checking's real layout: full account number, split
+  label/value, repeated per-page marker** (§6.3, Phase O): the same real
+  Chase Checking statement that surfaced D33 also uses a third real
+  Chase layout, distinct from both layouts `chase.rs` already handled.
+  Three real findings, all fixed in `chase.rs`: (1) its `"Account
+  Number:"` is followed by the **full, unmasked** account number, not a
+  masked last-4 group like the credit-card layout — account-id
+  extraction now always keeps the last 4 digits of whatever digit run
+  it finds, which is a no-op for an already-4-digit run so both layouts
+  still work unchanged; (2) its `"CHECKING SUMMARY"` table splits each
+  row's label and dollar value onto separate lines/paragraphs (a
+  pdf-extract column-order artifact, same category as Vanguard's
+  fund-table quirk, D31's addendum) — balance extraction now falls back
+  to finding `"Ending Balance"` and then the next `"$"` within a bounded
+  window when the adjacent `"Balance $"` substring search finds nothing;
+  (3) **a real, previously-unexercised bug**: this statement repeats
+  `"Account Number:"` on every page, which every prior single-page
+  synthetic fixture never exercised — without deduping by last4, each
+  repeat was read as a distinct account and the whole statement was
+  rejected as `AmbiguousMatch` even though every occurrence names the
+  same one account. `extract_account_sections` now dedupes by last4,
+  keeping the first occurrence whose balance can be found.

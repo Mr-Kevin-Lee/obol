@@ -8,9 +8,25 @@
 //! since these are digitally generated bank/brokerage statements, not
 //! scanned images (§6.3's rationale for this dependency choice: smallest
 //! viable dependency tree per §4).
+//!
+//! **`pdftotext` fallback (spec D33).** `pdf-extract` 0.12.0 — the
+//! latest release, confirmed against its own unreleased source too —
+//! only maps `MacRomanEncoding`/`MacExpertEncoding`/`WinAnsiEncoding` to
+//! Unicode and hard-`panic!`s on anything else. A real Chase Checking
+//! statement uses `SymbolEncoding`, which this crate has never
+//! supported at all — not a bug a version bump fixes. Rather than patch
+//! or fork `pdf-extract`, whenever it fails (by panic or by `Err`) this
+//! module shells out to the `pdftotext` CLI (poppler-utils) as a
+//! best-effort fallback, since poppler's own encoding handling is far
+//! more complete. `pdftotext` isn't a Cargo dependency — if it isn't
+//! installed (or fails for its own reasons), the fallback quietly
+//! returns `None` and the caller reports `pdf-extract`'s original error,
+//! so someone without poppler installed still gets a sensible message
+//! rather than a confusing one about a tool they've never heard of.
 
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::path::Path;
+use std::process::Command;
 
 use thiserror::Error;
 
@@ -33,21 +49,43 @@ pub enum ExtractError {
     Panicked { path: String, message: String },
 }
 
-/// Extracts plain text from a PDF file.
+/// Extracts plain text from a PDF file, falling back to `pdftotext`
+/// (see module doc comment, D33) whenever `pdf-extract` itself can't
+/// handle this particular file's internals.
 pub fn extract_text(path: &Path) -> Result<String, ExtractError> {
     let result = catch_unwind(AssertUnwindSafe(|| pdf_extract::extract_text(path)));
 
     match result {
         Ok(Ok(text)) => Ok(text),
-        Ok(Err(source)) => Err(ExtractError::Extraction {
+        Ok(Err(source)) => pdftotext_fallback(path).ok_or_else(|| ExtractError::Extraction {
             path: path.display().to_string(),
             source,
         }),
-        Err(panic_payload) => Err(ExtractError::Panicked {
-            path: path.display().to_string(),
-            message: panic_message(panic_payload),
-        }),
+        Err(panic_payload) => {
+            let message = panic_message(panic_payload);
+            pdftotext_fallback(path).ok_or_else(|| ExtractError::Panicked {
+                path: path.display().to_string(),
+                message,
+            })
+        }
     }
+}
+
+/// Runs `pdftotext <path> -` (poppler-utils) and returns its stdout as
+/// text. `None` — never an error of its own — whenever the binary isn't
+/// installed, exits non-zero, or produces non-UTF-8 output; the caller
+/// always has `pdf-extract`'s own error to fall back to reporting in
+/// that case. Not covered by an automated test (would require bundling
+/// or asserting on a real `pdftotext` install in CI); verified manually
+/// against a real Chase Checking statement that trips the
+/// `SymbolEncoding` gap in `pdf-extract` — same rendering-code-style
+/// carve-out as this module's terminal setup/teardown (§5/D9).
+fn pdftotext_fallback(path: &Path) -> Option<String> {
+    let output = Command::new("pdftotext").arg(path).arg("-").output().ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    String::from_utf8(output.stdout).ok()
 }
 
 /// Extracts a human-readable message from a caught panic's payload —

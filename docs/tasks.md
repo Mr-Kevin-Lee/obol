@@ -413,3 +413,38 @@ stock/RSU holdings, unrelated to Fidelity NetBenefits.
     this file (Phase J's "Follow-on" note) and `docs/spec.md` (D28's
     addendum) + `docs/spec.md` D32 decision record + this Phase N
     entry.
+
+## Phase O — Chase Checking real-statement fixes (D33/D34)
+
+A real Chase Checking statement surfaced two unrelated gaps: `pdf-extract`
+can't handle this statement's `SymbolEncoding` fonts at all (not a
+version-bump fix — confirmed against the crate's own unreleased source),
+and `chase.rs`'s existing checking/credit-card layouts didn't cover this
+statement's actual structure.
+
+57. `pdftotext` (poppler-utils) fallback in `pdf_text::extract_text` —
+    tried whenever `pdf-extract` fails, by panic or by `Err`. Not a
+    Cargo dependency; `None` (not an error) if the binary is missing or
+    fails, so the caller still reports `pdf-extract`'s own error in that
+    case. Not covered by an automated test (would require bundling or
+    asserting on a real `pdftotext` install in CI) — verified manually
+    against the real statement that surfaced the gap, same carve-out as
+    this module's terminal setup/teardown (§5/D9).
+58. `chase.rs` gains a third real layout: `"Account Number:"` followed
+    by the full, unmasked account number (not a masked last-4 group) —
+    account-id extraction now always keeps the last 4 digits of
+    whatever digit run it finds. Balance extraction falls back to
+    finding `"Ending Balance"` and then the next `"$"` within a bounded
+    window when the adjacent `"Balance $"` substring isn't found (this
+    statement's `"CHECKING SUMMARY"` table splits each row's label and
+    dollar value onto separate lines, a pdf-extract column-order
+    artifact). `extract_account_sections` now dedupes by last4 — this
+    statement repeats `"Account Number:"` on every page, which a
+    single-page synthetic fixture never exercised, and without deduping
+    was misread as multiple accounts and rejected as `AmbiguousMatch`.
+    Tests: full-unmasked-number reduces to its last 4 digits; a split
+    label/value "Ending Balance" is still found; the same account
+    repeated across pages is not treated as ambiguous.
+59. `docs/spec.md` D33 + D34 decision records, this Phase O entry.
+60. Verify build/tests, commit, manual end-to-end walkthrough against
+    the real Chase Checking statement via `~/Statements/Chase/Checking`.

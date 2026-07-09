@@ -7,12 +7,14 @@
 //! never a PDF file itself — kept a pure string-in/struct-out function
 //! so it's testable against inline fixtures without any PDF I/O.
 //!
-//! Handles two distinct real Chase layouts (checking/savings and credit
-//! card), both confirmed against real statement structure — field
-//! labels and section headers only, no real balances/account numbers/
-//! names ever appear in this file or its tests:
-//! - **Checking/savings**: `"Account ending in ####"` (straight digits,
-//!   no masking) paired with the nearest following `"Balance $X"`.
+//! Handles three distinct real Chase layouts (two checking/savings
+//! variants and credit card), all confirmed against real statement
+//! structure — field labels and section headers only, no real
+//! balances/account numbers/names ever appear in this file or its
+//! tests:
+//! - **Checking/savings** (one real statement): `"Account ending in
+//!   ####"` (straight digits, no masking) paired with the nearest
+//!   following `"Balance $X"`.
 //! - **Credit card** (e.g. Sapphire Reserve): `"Account Number:  XXXX
 //!   XXXX XXXX ####"` (masked groups, last 4 real) paired with `"New
 //!   Balance $X"` — `"Balance $"` is a substring of `"New Balance $"`,
@@ -22,12 +24,32 @@
 //!   wording — notably *not* the generic `"Credit Limit"` originally
 //!   guessed) and `"Available Credit"`/`"Minimum Payment Due"`, both
 //!   confirmed present verbatim.
+//! - **Checking/savings, a second real statement** (Chase Total
+//!   Checking, spec D34): also uses `"Account Number:"`, but followed
+//!   by the **full, unmasked** account number rather than a masked
+//!   last-4 group — the account-id extraction takes the last 4 digits
+//!   of whatever digit run it finds, which happens to already be
+//!   correct for the masked case too (a 4-digit run's "last 4" is
+//!   itself). Its `"CHECKING SUMMARY"` table also splits each row's
+//!   label and dollar value onto separate lines (a pdf-extract
+//!   column-order artifact, same category as Vanguard's fund-table
+//!   quirk) — `"Ending Balance"` isn't immediately followed by `"$"`,
+//!   so balance extraction falls back to a bounded forward search past
+//!   the label for the next `"$"` when the adjacent-substring search
+//!   finds nothing. **This statement also repeats `"Account Number:"`
+//!   on every page** — a real, previously-unexercised case that a
+//!   single-page synthetic fixture never caught: without deduping by
+//!   last4, each repeat was read as a distinct account and rejected as
+//!   `AmbiguousMatch` even though it's the same one account throughout.
 //!
 //! Both account-id markers are found via the same
-//! "skip past any non-digit masking characters, then capture the digit
-//! run" helper — it happens to work for both layouts unchanged, since
-//! `"Account ending in "` has zero masking characters to skip and
-//! `"Account Number:  XXXX XXXX XXXX "` has several.
+//! "skip past any non-digit masking characters, then capture a digit
+//! run, keep its last 4" helper — it happens to work for all three
+//! layouts unchanged, since `"Account ending in "` and the masked
+//! credit-card group both yield an already-4-digit run, and the full
+//! unmasked number yields a longer one whose last 4 digits are taken.
+
+use std::collections::HashSet;
 
 use crate::statement_import::parser::{ExpectedAccount, ParseError, ParsedStatement, StatementParser};
 use crate::Category;
@@ -82,21 +104,31 @@ struct AccountSection {
 }
 
 /// Finds every account-id marker (checking/savings' `"Account ending in
-/// ####"` or credit card's `"Account Number:"`) and the `"Balance $X"`
-/// that follows it. Searches loosely by substring position rather than
-/// assuming a fixed line structure, since `pdf-extract`'s line breaks
-/// don't necessarily match the statement's original visual layout.
+/// ####"` or `"Account Number:"`, either masked or fully unmasked) and
+/// the balance that follows it. Searches loosely by substring position
+/// rather than assuming a fixed line structure, since `pdf-extract`'s
+/// line breaks don't necessarily match the statement's original visual
+/// layout. **Deduped by last4** (spec D34) — a real multi-page
+/// statement repeats its account-id marker on every page, which would
+/// otherwise be misread as multiple distinct accounts and rejected as
+/// `AmbiguousMatch` even though every occurrence names the same one
+/// account. The first occurrence whose balance can be found wins;
+/// later repeats of the same last4 are skipped outright.
 fn extract_account_sections(text: &str) -> Vec<AccountSection> {
     const MARKERS: &[&str] = &["Account ending in ", "Account Number:"];
     let mut sections = Vec::new();
+    let mut seen_last4s: HashSet<String> = HashSet::new();
 
     for marker in MARKERS {
         let mut search_from = 0;
         while let Some(rel_pos) = text[search_from..].find(marker) {
             let after_marker = search_from + rel_pos + marker.len();
             if let Some(last4) = extract_last4(&text[after_marker..]) {
-                if let Some(balance) = find_next_balance(&text[after_marker..]) {
-                    sections.push(AccountSection { last4, balance });
+                if !seen_last4s.contains(&last4) {
+                    if let Some(balance) = find_next_balance(&text[after_marker..]) {
+                        seen_last4s.insert(last4.clone());
+                        sections.push(AccountSection { last4, balance });
+                    }
                 }
             }
 
@@ -113,29 +145,59 @@ fn extract_account_sections(text: &str) -> Vec<AccountSection> {
 /// Skips past up to 40 non-digit characters (masking `X`s, spaces —
 /// `"Account Number:  XXXX XXXX XXXX ####"`'s masked groups, or nothing
 /// at all for `"Account ending in ####"`, which has none) and captures
-/// the first 4-digit run found. Bounded so a marker with no digits
-/// anywhere nearby (e.g. right at the end of the document) can't walk
-/// off into unrelated later text.
+/// the digit run found there, keeping only its last 4 digits. A masked
+/// group or `"Account ending in"` already yields a 4-digit run, whose
+/// "last 4" is itself; a real Chase Total Checking statement's
+/// `"Account Number:"` instead shows the **full, unmasked** account
+/// number (spec D34) — a much longer digit run — so this always takes
+/// the last 4 rather than requiring the run to already be exactly 4.
+/// Bounded so a marker with no digits anywhere nearby (e.g. right at
+/// the end of the document) can't walk off into unrelated later text.
 fn extract_last4(text: &str) -> Option<String> {
     let window: String = text.chars().take(40).collect();
     let digit_start = window.find(|c: char| c.is_ascii_digit())?;
-    let last4: String = window[digit_start..]
+    let digits: String = window[digit_start..]
         .chars()
         .take_while(|c| c.is_ascii_digit())
         .collect();
-    (last4.len() == 4).then_some(last4)
+    (digits.len() >= 4).then(|| digits[digits.len() - 4..].to_string())
 }
 
-/// Finds the next `"Balance $X"` after the given position and parses
-/// `X` as a decimal amount, stripping thousands-separator commas.
+/// Finds the next balance after the given position and parses it as a
+/// decimal amount, stripping thousands-separator commas. Tries the
+/// adjacent `"Balance $X"` substring first (credit card's `"New Balance
+/// $X"`, and the checking/savings layout confirmed against an earlier
+/// real statement); falls back to `"Ending Balance"` followed — a few
+/// lines later, not adjacent — by the next `"$"` (a real Chase Total
+/// Checking statement's `"CHECKING SUMMARY"` table, spec D34, which
+/// splits each row's label and dollar value onto separate lines).
 fn find_next_balance(text: &str) -> Option<f64> {
-    const MARKER: &str = "Balance $";
-    let amount_start = text.find(MARKER)? + MARKER.len();
-    let amount: String = text[amount_start..]
+    find_amount_adjacent_to(text, "Balance $").or_else(|| find_amount_after_label(text, "Ending Balance", 40))
+}
+
+fn find_amount_adjacent_to(text: &str, marker: &str) -> Option<f64> {
+    let amount_start = text.find(marker)? + marker.len();
+    parse_amount(&text[amount_start..])
+}
+
+/// Finds `label`, then the next `"$"` within `window` characters after
+/// it (tolerating blank lines/other short lines pdf-extract inserted
+/// between a table's label and value column), and parses the amount
+/// that follows.
+fn find_amount_after_label(text: &str, label: &str, window: usize) -> Option<f64> {
+    let start = text.find(label)? + label.len();
+    let end = (start + window).min(text.len());
+    let slice = &text[start..end];
+    let dollar_pos = slice.find('$')?;
+    parse_amount(&slice[dollar_pos + 1..])
+}
+
+fn parse_amount(text: &str) -> Option<f64> {
+    let amount: String = text
         .chars()
         .take_while(|c| c.is_ascii_digit() || *c == ',' || *c == '.')
         .collect();
-    amount.replace(',', "").parse().ok()
+    (!amount.is_empty()).then(|| amount.replace(',', "")).and_then(|a| a.parse().ok())
 }
 
 /// Best-effort statement date, matching `"Statement Date: MM/DD/YYYY"`.
@@ -326,5 +388,50 @@ mod tests {
 
         assert_eq!(result.balance, 567.89);
         assert_eq!(result.account_identifier, "4321");
+    }
+
+    #[test]
+    fn a_full_unmasked_account_number_is_reduced_to_its_last_4_digits() {
+        // Spec D34: a real Chase Total Checking statement's "Account
+        // Number:" is followed by the full account number, not a
+        // masked last-4 group.
+        let text = "CHASE\nAccount Number:\n\n1234567890\n\nNew Balance $250.00\n";
+
+        let result = ChaseStatementParser.parse(text, &expected(None)).unwrap();
+
+        assert_eq!(result.account_identifier, "7890");
+        assert_eq!(result.balance, 250.00);
+    }
+
+    #[test]
+    fn ending_balance_split_across_lines_from_its_dollar_value_is_still_found() {
+        // Spec D34: this statement's "CHECKING SUMMARY" table puts each
+        // row's label and dollar value on separate lines/paragraphs (a
+        // pdf-extract column-order artifact), so "Balance $" never
+        // appears as an adjacent substring for this layout.
+        let text = "CHASE\nAccount Number:\n\n1234567890\n\n\
+                     CHECKING SUMMARY\n\nBeginning Balance\n\n$100.00\n\n\
+                     Ending Balance\n\n$250.00\n";
+
+        let result = ChaseStatementParser.parse(text, &expected(None)).unwrap();
+
+        assert_eq!(result.balance, 250.00);
+    }
+
+    #[test]
+    fn the_same_account_repeated_across_pages_is_not_treated_as_ambiguous() {
+        // Spec D34: a real multi-page statement repeats "Account
+        // Number:" (with the same account number) on every page —
+        // without deduping by last4, this was misread as multiple
+        // distinct accounts and rejected as AmbiguousMatch.
+        let text = "CHASE\nAccount Number:\n\n1234567890\n\n\
+                     Ending Balance\n\n$250.00\n\n\
+                     Account Number:\n\n1234567890\n\n\
+                     Ending Balance\n\n$250.00\n";
+
+        let result = ChaseStatementParser.parse(text, &expected(None)).unwrap();
+
+        assert_eq!(result.balance, 250.00);
+        assert_eq!(result.account_identifier, "7890");
     }
 }
