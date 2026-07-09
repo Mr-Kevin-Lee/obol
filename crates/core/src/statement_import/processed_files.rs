@@ -41,6 +41,14 @@ struct SourceLedgerEntry {
     /// balance to a stale statement. Defaults to `0` (the Unix epoch),
     /// which is always older than any real file, so a source's very
     /// first processed file is never rejected by this check.
+    ///
+    /// `#[serde(default)]` is load-bearing, not decorative — a ledger
+    /// file written before this field existed has no
+    /// `last_processed_mtime_secs` key at all, and without this
+    /// attribute `serde` treats that as a hard deserialization error
+    /// (a real regression this caused once, against a real ledger file
+    /// from before this field was added).
+    #[serde(default)]
     last_processed_mtime_secs: i64,
 }
 
@@ -287,5 +295,31 @@ mod tests {
         let round_tripped: ProcessedFilesLedger = serde_json::from_str(&json).unwrap();
 
         assert_eq!(round_tripped, ledger);
+    }
+
+    #[test]
+    fn a_ledger_file_written_before_last_processed_mtime_secs_existed_still_parses() {
+        // Regression test for a real bug: a ledger file on disk from
+        // before this field was added has no
+        // "last_processed_mtime_secs" key at all. Without
+        // `#[serde(default)]`, deserializing it is a hard error —
+        // every statement_import source failed with "processed-files
+        // ledger could not be parsed" the first time this happened
+        // against a real, pre-existing ledger file.
+        let old_format_json = r#"{
+            "per_source": {
+                "chase_checking": {
+                    "processed_filenames": {"statement.pdf": "abc123"},
+                    "last_balance": 100.0,
+                    "last_as_of_date": "2026-06-30",
+                    "last_account_identifier": "6789"
+                }
+            }
+        }"#;
+
+        let ledger: ProcessedFilesLedger = serde_json::from_str(old_format_json).unwrap();
+
+        assert_eq!(ledger.last_known("chase_checking"), Some((100.0, "2026-06-30", "6789")));
+        assert_eq!(ledger.last_processed_mtime_secs("chase_checking"), 0);
     }
 }
