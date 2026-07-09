@@ -8,6 +8,7 @@
 use crate::statement_import::apple_card::AppleCardStatementParser;
 use crate::statement_import::chase::ChaseStatementParser;
 use crate::statement_import::fidelity::FidelityStatementParser;
+use crate::statement_import::morgan_stanley::MorganStanleyStatementParser;
 use crate::statement_import::vanguard::VanguardStatementParser;
 use crate::{Category, Holding};
 
@@ -100,6 +101,9 @@ pub fn parser_for(institution: &str) -> Option<Box<dyn StatementParser>> {
         "vanguard" => Some(Box::new(VanguardStatementParser)),
         "fidelity" => Some(Box::new(FidelityStatementParser)),
         "applecard" | "apple card" => Some(Box::new(AppleCardStatementParser)),
+        "morganstanley" | "morgan stanley" | "etrade" | "e*trade" => {
+            Some(Box::new(MorganStanleyStatementParser))
+        }
         _ => None,
     }
 }
@@ -138,12 +142,26 @@ mod tests {
     }
 
     #[test]
+    fn morgan_stanley_resolves_to_the_morgan_stanley_parser() {
+        let parser = parser_for("morganstanley").unwrap();
+        assert_eq!(parser.institution(), "morganstanley");
+    }
+
+    #[test]
+    fn morgan_stanley_also_resolves_via_etrade_aliases() {
+        assert!(parser_for("Morgan Stanley").is_some());
+        assert!(parser_for("etrade").is_some());
+        assert!(parser_for("E*TRADE").is_some());
+    }
+
+    #[test]
     fn institution_matching_is_case_insensitive() {
         assert!(parser_for("Chase").is_some());
         assert!(parser_for("CHASE").is_some());
         assert!(parser_for("Vanguard").is_some());
         assert!(parser_for("Fidelity").is_some());
         assert!(parser_for("APPLECARD").is_some());
+        assert!(parser_for("MORGANSTANLEY").is_some());
     }
 
     #[test]

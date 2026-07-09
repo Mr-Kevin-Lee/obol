@@ -184,9 +184,11 @@ follow-on work, not part of this phase.
 Follow-on: extending Phase J's `StatementParser` pattern to the
 remaining §7 institutions. Built against real statement structure (field
 labels/section headers only, no real balances/account numbers/names —
-see D28's addendum below); Morgan Stanley's originally-tentative row
-turned out to be covered by a Fidelity NetBenefits statement in
-practice, so no separate Morgan Stanley parser is planned.
+see D28's addendum below). **Correction**: this originally claimed
+Morgan Stanley's row turned out to be covered by a Fidelity NetBenefits
+statement, so no separate parser would be needed — wrong. Morgan
+Stanley (via E*TRADE, acquired 2020) is a real, separate account; see
+Phase N / D32.
 
 35. `VanguardStatementParser` — handles both of Vanguard's statement
     sub-layouts (529/Savings-style and Cash Plus/Brokerage-style) behind
@@ -362,3 +364,52 @@ bars (ratatui has no native pie chart).
     TUI verification only, per this project's existing rendering-code
     carve-out (§5/D9).
 52. `docs/spec.md` FR22 + D31 decision record, this Phase M entry.
+
+## Phase N — Morgan Stanley / E*TRADE statement parser (D32)
+
+Decided post-v0.1 (D32): **corrects a wrong earlier claim** (Phase J's
+"Follow-on" note and D28's addendum both said Morgan Stanley's §7 row
+turned out to be covered by a Fidelity NetBenefits statement, so no
+separate parser was needed — this was wrong. Morgan Stanley acquired
+E*TRADE in 2020; it's a real, separate brokerage account with its own
+stock/RSU holdings, unrelated to Fidelity NetBenefits.
+
+53. `MorganStanleyStatementParser` — verified against a real "Client
+    Statement" (field labels/section headers only, never a real
+    balance/account number/name). Balance from the `"BALANCE SHEET"`
+    section's `"TOTAL VALUE $X $Y"` line (last of 2 amounts, same
+    earlier-then-current convention as every other parser). Account
+    identifier from the account-number line following the account-type
+    heading — verified against exactly one real account-type label
+    (`"Morgan Stanley at Work Self-Directed Account"`); other Morgan
+    Stanley/E*TRADE account types may use a different label, a stated
+    limitation, not something guessed past. Always `Category::Asset`
+    (matches Vanguard's same no-liability-products simplification).
+    Tests: string-literal fixtures (synthetic values, real product/
+    section-header text) — parses current (not prior) period total
+    value; account_hint exact-matches the account number; hint mismatch
+    errors; unrecognized layout errors.
+54. Morgan Stanley holdings extraction — cash/BDP/MMF summary line (a
+    single dollar amount) plus individual `"COMMON STOCKS"` rows.
+    Stock rows are structurally different from Vanguard's: **Market
+    Value is the third dollar amount in the row, not the last** (a row
+    shows Share Price, Total Cost, Market Value, Unrealized Gain/Loss,
+    Est Ann Income, in that order — five amounts, verified against
+    exactly one real holding with all five columns populated; a
+    position with missing cost-basis data, shown as `"—"` per this
+    statement's own disclosures, could shift this counting — a stated
+    limitation). Deliberately excludes `"STOCK PLAN DETAILS"` (unvested/
+    potential RSU shares) — this statement's own disclosure states
+    those values aren't actual held assets and aren't SIPC-protected.
+    Tests: string-literal fixtures — cash position extracted; a stock
+    row's Market Value extracted correctly (explicitly not Share Price
+    or Total Cost — the point of this test); extraction never reads
+    past `"ALLOCATION OF ASSETS"`; RSU rows in `"STOCK PLAN DETAILS"`
+    are never counted as holdings.
+55. `parser_for` gains `"morganstanley"`/`"morgan stanley"`/`"etrade"`/
+    `"e*trade"` match arms (both institution names, since Morgan
+    Stanley acquired E*TRADE and both names appear on real statements).
+56. Correct the wrong "Morgan Stanley covered by Fidelity" claim in
+    this file (Phase J's "Follow-on" note) and `docs/spec.md` (D28's
+    addendum) + `docs/spec.md` D32 decision record + this Phase N
+    entry.

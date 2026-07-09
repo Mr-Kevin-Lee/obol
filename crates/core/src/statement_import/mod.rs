@@ -10,9 +10,9 @@
 //! - [`pdf_text`] — plain-text PDF extraction.
 //! - [`parser`] — the `StatementParser` trait + institution dispatch.
 //! - `chase` — the reference `StatementParser` implementation.
-//! - `vanguard`, `fidelity`, `apple_card` — sibling `StatementParser`
-//!   implementations, added the same way `chase` was: one new module +
-//!   one match arm in `parser::parser_for`.
+//! - `vanguard`, `fidelity`, `apple_card`, `morgan_stanley` — sibling
+//!   `StatementParser` implementations, added the same way `chase` was:
+//!   one new module + one match arm in `parser::parser_for`.
 //! - [`discovery`] — auto-discovers new `statement_import` sources from
 //!   a fixed `<root>/<Institution>/<Account>` directory convention
 //!   (spec D29), rather than requiring each one to be added by hand
@@ -24,6 +24,7 @@ mod apple_card;
 mod chase;
 mod discovery;
 mod fidelity;
+mod morgan_stanley;
 mod parser;
 mod pdf_text;
 mod processed_files;

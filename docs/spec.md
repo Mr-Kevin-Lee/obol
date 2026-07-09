@@ -1440,10 +1440,14 @@ Previously open questions, now resolved:
   meaning than Chase's `last4: Option<String>` — renamed to
   `account_hint: Option<String>`, since Fidelity NetBenefits statements
   carry no account number at all, only a plan/employer name (matched as
-  a case-insensitive substring). Morgan Stanley's originally-tentative
-  row (§7) turned out in practice to be covered by a Fidelity
-  NetBenefits statement, so no separate Morgan Stanley parser is
-  planned. **Addendum 2**: tasks 28–36 built the provider itself but left
+  a case-insensitive substring). **Correction (see D32)**: this
+  addendum originally claimed Morgan Stanley's §7 row turned out to be
+  covered by a Fidelity NetBenefits statement, so no separate parser
+  would be needed — this was wrong. Morgan Stanley (via E*TRADE, which
+  it acquired in 2020) is a real, separate brokerage account with its
+  own individual stock/RSU holdings, distinct from Fidelity NetBenefits
+  entirely. `MorganStanleyStatementParser` was built for it in D32.
+  **Addendum 2**: tasks 28–36 built the provider itself but left
   no way to actually create a `statement_import` source — the Sources
   screen's generic add/edit form (§10.1) only accepted `manual_entry`/
   `webdriver`, so a user could only configure statement import by
@@ -1604,3 +1608,33 @@ Previously open questions, now resolved:
   row/line; the *last* dollar amount is taken as current, following the
   same earlier-date-first, current-date-last ordering this statement
   uses everywhere else it shows a two-point comparison.
+- **D32 — Morgan Stanley / E*TRADE statement parser; corrects D28's
+  wrong Fidelity claim** (§7, FR1, Phase N): D28's addendum and Phase
+  J's "Follow-on" note in `docs/tasks.md` both claimed Morgan Stanley's
+  §7 row turned out to be covered by a Fidelity NetBenefits statement,
+  so no separate parser was needed. **This was wrong** — Morgan Stanley
+  acquired E*TRADE in 2020, and it's a real, separate brokerage account
+  with its own stock/RSU holdings, structurally and institutionally
+  unrelated to Fidelity NetBenefits. `MorganStanleyStatementParser` is
+  verified against a real "Client Statement" (field labels/section
+  headers only, never a real balance/account number/name). Balance
+  comes from the `"BALANCE SHEET"` section's `"TOTAL VALUE $X $Y"` line
+  (last of 2 amounts, the familiar earlier-then-current convention).
+  Both `"morganstanley"` and `"etrade"`/`"e*trade"` dispatch to this
+  parser, since both names appear on real statements. Always
+  `Category::Asset` (same no-liability-products simplification as
+  Vanguard — a margin debit balance could in principle make this
+  wrong, but isn't handled).
+  **Holdings extraction (spec D31) differs structurally from
+  Vanguard's**: an individual stock row shows five dollar amounts
+  (Share Price, Total Cost, Market Value, Unrealized Gain/Loss, Est Ann
+  Income, in that column order) and Market Value — the one that
+  matters — is the **third**, not the last. Verified against exactly
+  one real holding with all five columns populated; a position with
+  missing cost-basis data (shown as `"—"` per this statement's own
+  disclosures) could shift this counting, a stated limitation rather
+  than something guessed past. Deliberately excludes `"STOCK PLAN
+  DETAILS"` (unvested/potential RSU shares) from holdings — the
+  statement's own disclosure states plainly that those values aren't
+  actual held assets and aren't SIPC-protected; counting them would
+  overstate real current account value.
