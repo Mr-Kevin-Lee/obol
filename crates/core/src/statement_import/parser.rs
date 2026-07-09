@@ -5,6 +5,7 @@
 //! institutions are added the same way — a new sibling module plus one
 //! new match arm in [`parser_for`], with no changes needed here).
 
+use crate::statement_import::apple_card::AppleCardStatementParser;
 use crate::statement_import::chase::ChaseStatementParser;
 use crate::statement_import::fidelity::FidelityStatementParser;
 use crate::statement_import::vanguard::VanguardStatementParser;
@@ -91,6 +92,7 @@ pub fn parser_for(institution: &str) -> Option<Box<dyn StatementParser>> {
         "chase" => Some(Box::new(ChaseStatementParser)),
         "vanguard" => Some(Box::new(VanguardStatementParser)),
         "fidelity" => Some(Box::new(FidelityStatementParser)),
+        "applecard" | "apple card" => Some(Box::new(AppleCardStatementParser)),
         _ => None,
     }
 }
@@ -118,11 +120,23 @@ mod tests {
     }
 
     #[test]
+    fn apple_card_resolves_to_the_apple_card_parser() {
+        let parser = parser_for("applecard").unwrap();
+        assert_eq!(parser.institution(), "applecard");
+    }
+
+    #[test]
+    fn apple_card_also_resolves_with_a_space() {
+        assert!(parser_for("Apple Card").is_some());
+    }
+
+    #[test]
     fn institution_matching_is_case_insensitive() {
         assert!(parser_for("Chase").is_some());
         assert!(parser_for("CHASE").is_some());
         assert!(parser_for("Vanguard").is_some());
         assert!(parser_for("Fidelity").is_some());
+        assert!(parser_for("APPLECARD").is_some());
     }
 
     #[test]

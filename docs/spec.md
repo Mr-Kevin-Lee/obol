@@ -34,9 +34,11 @@ this tool owns "what is my financial health right now."
 - **FR1** — Fetch balances from: Chase (checking, credit card), Vanguard
   (brokerage, 529, money market), Fidelity (401k), and Morgan Stanley/E-Trade
   (stocks/RSUs). See §7 for the connection approach per institution.
-- **FR2** — Apple Card (Goldman Sachs) balance is entered manually each run,
-  since it has no reachable web portal for either an aggregator or browser
-  automation. See §7.
+- **FR2** — Apple Card (Goldman Sachs) balance is imported via the
+  statement-dropbox path (D30) — Wallet app exports a PDF statement, same
+  as Chase/Vanguard/Fidelity. Originally planned as manual entry (see
+  §7's superseded rationale), before a downloadable statement was found
+  to exist after all.
 - **FR3 (stretch)** — Student loan and mortgage balances, once servicers are
   chosen.
 - **FR4** — Account data is organized into two categories, Asset and
@@ -429,7 +431,7 @@ otherwise.**
 | Vanguard | Brokerage, 529, money market | **Browser automation** (revised — see D25) | **Confirmed via real Production testing: Plaid does not support Vanguard at all**, not a sub-account nuance as originally assumed. Reactivates the fantoccini spike (§15, task 21) — Vanguard is now a concrete real target, not a parked "no institution available" item |
 | Fidelity | 401k | Plaid, **pending Compliance Center approval** (see D25) | **Confirmed via real Production testing:** Plaid connects but returns "no eligible accounts" — matches the Compliance-Center-gating risk already flagged below, now observed directly rather than theoretical. Blocked until that approval is requested and granted, or abandoned in favor of browser automation like Vanguard |
 | Morgan Stanley / E-Trade | Stocks, RSUs | Plaid | Not yet tested against real Production — confirm before assuming it works, given Vanguard/Fidelity's results |
-| Apple Card (Goldman Sachs) | Credit card | **Manual entry** for v1; browser automation is a real future option | Has a web portal at card.apple.com (corrected — originally assumed no portal existed). No third-party API access to it exists, so v1 stays manual entry (D3) rather than adding complexity for one account — but unlike student loans/mortgage (no servicer chosen yet), a concrete WebDriver spike target now exists if that ever gets revisited. Recommend a simple "enter balance" panel for now. |
+| Apple Card (Goldman Sachs) | Credit card | **Statement import** (revised — see D30) | Originally planned as manual entry (D3) — no aggregator/browser path exists, and it was assumed no downloadable statement existed either. Corrected: the Wallet app exports a PDF statement, same as every other statement-import institution, so it uses that path instead of ever needing `ManualEntryProvider` built. |
 | Student loans (stretch) | TBD | Browser automation | Servicer TBD; revisit once selected |
 | Mortgage (stretch) | TBD | Browser automation | Servicer TBD |
 
@@ -1522,3 +1524,26 @@ Previously open questions, now resolved:
   a positive content match, and applies uniformly rather than
   institution-specific (harmless for Vanguard/Fidelity in practice, and
   arguably useful defense-in-depth if a statement is ever misfiled).
+- **D30 — Apple Card (Goldman Sachs) covered via statement import,
+  `ManualEntryProvider` never built** (§7, FR2, Phase L): FR2's original
+  plan assumed Apple Card had no downloadable statement at all, so v1
+  planned a `ManualEntryProvider` (task 15) purely for this one account.
+  Corrected: the Wallet app exports a PDF statement, so it fits the
+  existing `StatementParser` pattern exactly like every other
+  institution — no new provider mechanism needed. `AppleCardStatementParser`
+  is verified against a real Apple Card statement (field labels only,
+  never a real balance/account number/name/email). Always
+  `Category::Liability` (a credit card has no asset variant) — no
+  content-based detection needed, unlike Chase. No card/account number
+  appears anywhere in this layout (same situation as Fidelity
+  NetBenefits) — the closest stable identifier is the `"Apple Card
+  Customer"` line naming the cardholder, used as the raw
+  `account_identifier` the same way Fidelity uses its plan-name line.
+  One real parsing subtlety: the statement shows both a `"Previous Total
+  Balance $X"` (prior period) and a standalone `"Total Balance $X"`
+  (current) — since the former's text literally contains the latter as
+  a substring, a naive search would silently grab the stale figure;
+  `find_current_total_balance` explicitly excludes any match immediately
+  preceded by `"Previous "`. With this, `ManualEntryProvider` (task 15)
+  is no longer needed for any institution in this app's current scope —
+  parked indefinitely rather than built, since nothing left requires it.

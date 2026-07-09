@@ -80,7 +80,19 @@ parallel with E/F rather than waiting on them.
 
 ## Phase E — Simplest real provider
 
-15. `ManualEntryProvider` + CLI's `CredentialSource` impl.
+15. `ManualEntryProvider` + CLI's `CredentialSource` impl. **Never
+    actually built** — `NoInteractiveProvidersYet` (a placeholder that
+    always declines) has stood in for it since Phase H, and the
+    `manual_entry` provider string was never wired to a real factory
+    (`provider.rs`'s own doc comment says so). The Sources screen form
+    still lists `manual_entry` as a choice, so picking it produces an
+    "unknown provider" error at fetch time — a real gap for as long as
+    anything actually needed it. **Parked indefinitely as of D30**: the
+    one account this existed for (Apple Card) turned out to have a real
+    downloadable statement after all, so it uses `statement_import`
+    instead (task 42) and nothing in this app's current scope needs
+    `ManualEntryProvider` anymore. Revisit only if a genuinely
+    statement-less, aggregator-less institution shows up later.
     Tests: `ManualEntryProvider` unit-tested like any other `Provider`;
     the terminal-prompt `CredentialSource` impl is thin enough to verify
     manually rather than unit-test actual terminal I/O.
@@ -256,3 +268,36 @@ closed the "no way to add one" gap.
     manually against a real `~/Statements` tree end-to-end (same
     carve-out as task 34's `register_statement_import`).
 41. `docs/spec.md` D29 decision record + this Phase K entry.
+
+## Phase L — Apple Card via statement import (D30)
+
+Decided post-v0.1 (D30): FR2 originally planned `ManualEntryProvider`
+(task 15) specifically for Apple Card, assuming no downloadable
+statement existed. Corrected — the Wallet app exports a PDF statement —
+so this closes FR2 the same way tasks 35–36 closed Vanguard/Fidelity,
+via `StatementParser`, not a new provider mechanism. Supersedes task 15
+for this institution; see task 15's note for why `ManualEntryProvider`
+itself stays parked.
+
+42. `AppleCardStatementParser` (Goldman Sachs Bank USA statement
+    layout) — verified against a real Apple Card statement (field
+    labels only, never a real balance/account number/name/email).
+    Always `Category::Liability` (no asset variant, so no content-based
+    detection needed, unlike Chase). No account number in this layout
+    (same situation as Fidelity NetBenefits) — the `"Apple Card
+    Customer"` line naming the cardholder is used as the raw
+    `account_identifier` instead. `"Total Balance $X"` is the canonical
+    marker; explicitly excludes any match immediately preceded by
+    `"Previous "`, since `"Previous Total Balance $X"` (the prior
+    period) would otherwise be silently matched instead, given
+    `"Total Balance $"` is literally a substring of it.
+    Tests: string-literal fixtures (synthetic values only) — parses the
+    current (not previous) total balance, always categorized as
+    liability, `account_hint` substring-matches the customer line,
+    hint mismatch errors, unrecognized layout errors, missing as-of-date
+    doesn't block a valid balance.
+43. `parser_for` gains `"applecard"`/`"apple card"` match arms (both,
+    since a user's `~/Statements/<Institution>/` folder name could
+    reasonably be typed either way).
+44. `docs/spec.md` FR2 + §7 table updates, D30 decision record, this
+    Phase L entry.
