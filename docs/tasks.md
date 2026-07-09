@@ -301,3 +301,64 @@ itself stays parked.
     reasonably be typed either way).
 44. `docs/spec.md` FR2 + §7 table updates, D30 decision record, this
     Phase L entry.
+
+## Phase M — Vanguard Brokerage holdings breakdown (D31)
+
+Decided post-v0.1 (D31, FR22): every account so far reports exactly one
+balance. This phase adds a second data dimension for one account type —
+individual positions within an account, not just its total — so
+concentration risk (e.g. too much of a portfolio in one stock) is
+visible. Scoped to Vanguard Brokerage only; rendered as proportional
+bars (ratatui has no native pie chart).
+
+45. `Holding` type + `Asset.holdings`/`AccountRecord.holdings` +
+    `Account::holdings()` default method (test-first). Tests: `Asset`
+    with/without holdings; trait default returns `None` for `Liability`.
+46. `AccountRecord` serde round-trip with `holdings` (mirrors
+    `error_message`'s existing tests) + an old-snapshot-file-with-no-
+    `holdings`-key-still-loads regression test, matching
+    `processed_files.rs`'s `last_processed_mtime_secs` `#[serde(default)]`
+    precedent from the same session.
+47. `engine.rs` wiring (`account_to_record`, `error_record`,
+    `record_to_account`) + every other `Asset`/`Liability`/
+    `AccountRecord` construction site updated to keep compiling
+    (`plaid_provider.rs`, `pii.rs`'s `scrub()`, `provider.rs`/
+    `networth.rs`/`storage.rs`/`engine.rs`'s test fakes).
+48. `crates/core/src/holdings.rs` — `AssetClass` (`Cash`/`Fund`/`Stock`)
+    + `classify()` + `bucket()`, test-first against synthetic `Holding`
+    fixtures. Deliberately separate from parsing/schema — a pure,
+    read-time aggregation, so reclassifying later never needs a new
+    statement parse or a schema migration.
+49. `ParsedStatement.holdings: Vec<Holding>` field + `statement_import/
+    mod.rs`'s `fetch()` wiring — fresh-parse-only, never carried forward
+    via the ledger. Tests: a parser that never populates holdings leaves
+    `Asset.holdings` as `None`, not `Some(vec![])`; a no-new-statement
+    run never carries holdings forward even though balance still does
+    via `last_known()`.
+50. `vanguard.rs` `"Sweep program"`/`"Mutual funds"` table extraction —
+    verified against a real Cash Plus/Brokerage statement (field
+    labels/section headers only, never a real balance/account number/
+    name). Takes the *last* dollar amount per row (not the second —
+    fund rows show three amounts: price, balance-on-date-1,
+    balance-on-date-2), following the same earlier-date-first,
+    current-date-last convention this statement uses elsewhere. Bounded
+    so the "Mutual funds" table's row-scan never reads into the
+    following "Account activity" section, and so each row (including
+    the last one, which has no next-symbol boundary to stop at) is
+    bounded by its own nearest following blank line rather than the
+    next symbol or the section end — the latter was a real bug caught
+    while writing this task's own tests (the last row would otherwise
+    run into the table's own totals line).
+    Tests: string-literal fixtures (synthetic values, real Vanguard
+    fund tickers/names — public product names, not personal data) —
+    sweep cash position extracted as the current-period amount; each
+    mutual fund row extracted correctly; extraction never reads past
+    "Account activity"; a 529/Savings-style statement (no holdings
+    tables at all) produces no holdings, not an error; `parse()` threads
+    combined sweep + fund holdings through into `ParsedStatement`.
+51. `dashboard.rs`: `draw_holdings_breakdown()` — one proportional
+    horizontal bar per asset-class bucket, conditionally shown only
+    when the snapshot has at least one account with holdings. Manual
+    TUI verification only, per this project's existing rendering-code
+    carve-out (§5/D9).
+52. `docs/spec.md` FR22 + D31 decision record, this Phase M entry.

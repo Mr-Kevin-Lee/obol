@@ -1,5 +1,7 @@
 use serde::{Deserialize, Serialize};
 
+use crate::account::Holding;
+
 /// On-disk snapshot schema (spec §11.2). This is the flat, versioned DTO
 /// shape snapshots are stored as — the storage layer converts `Account`
 /// trait objects (see `account.rs`, D11) to/from this shape at the
@@ -34,6 +36,17 @@ pub struct AccountRecord {
     pub(crate) status: Status,
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub(crate) error_message: Option<String>,
+    /// This account's individual positions, if any (spec D31) — see
+    /// `Account::holdings()`. Additive/optional field, same
+    /// `#[serde(default)]` precedent as `error_message` above: a
+    /// snapshot file written before this field existed has no
+    /// `holdings` key at all and still loads fine, with this defaulting
+    /// to `None`. No `CURRENT_SCHEMA_VERSION` bump needed for a purely
+    /// additive optional field like this (confirmed against
+    /// `migration.rs`'s migration-chain, which is reserved for breaking
+    /// changes).
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub(crate) holdings: Option<Vec<Holding>>,
 }
 
 impl AccountRecord {
@@ -71,6 +84,10 @@ impl AccountRecord {
 
     pub fn error_message(&self) -> Option<&str> {
         self.error_message.as_deref()
+    }
+
+    pub fn holdings(&self) -> Option<&[Holding]> {
+        self.holdings.as_deref()
     }
 }
 
@@ -112,6 +129,7 @@ mod tests {
             currency: "USD".into(),
             status: Status::Ok,
             error_message: None,
+            holdings: None,
         }
     }
 
@@ -126,6 +144,26 @@ mod tests {
             currency: "USD".into(),
             status: Status::Error,
             error_message: Some("Manual entry not provided for this run".into()),
+            holdings: None,
+        }
+    }
+
+    fn holdings_record() -> AccountRecord {
+        AccountRecord {
+            account_key: "sha256:c4de...".into(),
+            source_id: "vanguard_brokerage".into(),
+            institution: "Vanguard".into(),
+            category: Category::Asset,
+            account_type: "brokerage".into(),
+            balance: Some(1000.0),
+            currency: "USD".into(),
+            status: Status::Ok,
+            error_message: None,
+            holdings: Some(vec![Holding {
+                symbol: "VOO".into(),
+                description: "Vanguard S&P 500 ETF".into(),
+                value: 1000.0,
+            }]),
         }
     }
 
@@ -143,6 +181,49 @@ mod tests {
         let json = serde_json::to_string(&record).unwrap();
         let back: AccountRecord = serde_json::from_str(&json).unwrap();
         assert_eq!(record, back);
+    }
+
+    #[test]
+    fn holdings_record_round_trips() {
+        let record = holdings_record();
+        let json = serde_json::to_string(&record).unwrap();
+        let back: AccountRecord = serde_json::from_str(&json).unwrap();
+        assert_eq!(record, back);
+    }
+
+    #[test]
+    fn a_record_with_no_holdings_omits_the_field() {
+        let json = serde_json::to_string(&ok_record()).unwrap();
+        assert!(!json.contains("holdings"));
+    }
+
+    #[test]
+    fn a_record_with_holdings_includes_the_field() {
+        let json = serde_json::to_string(&holdings_record()).unwrap();
+        assert!(json.contains("holdings"));
+        assert!(json.contains("VOO"));
+    }
+
+    #[test]
+    fn a_record_written_before_holdings_existed_still_loads() {
+        // Regression-style test, same shape as the real bug already hit
+        // once this session for ProcessedFilesLedger's own
+        // #[serde(default)] miss: a snapshot file from before this
+        // field existed has no "holdings" key at all.
+        let old_format_json = r#"{
+            "account_key": "sha256:9f2a...",
+            "source_id": "chase_checking",
+            "institution": "Chase",
+            "category": "asset",
+            "type": "checking",
+            "balance": 4213.55,
+            "currency": "USD",
+            "status": "ok"
+        }"#;
+
+        let record: AccountRecord = serde_json::from_str(old_format_json).unwrap();
+
+        assert_eq!(record.holdings(), None);
     }
 
     #[test]

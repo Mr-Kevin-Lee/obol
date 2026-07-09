@@ -102,6 +102,17 @@ this tool owns "what is my financial health right now."
   Plaid Items have been used, since that budget is limited and lifetime.
   See §7.1.
 
+### 2.8 Holdings breakdown
+
+- **FR22** — For holdings-bearing accounts (currently Vanguard
+  Brokerage), the dashboard shows a breakdown by asset class (cash,
+  fund, individual stock) as proportional bars, so concentration risk
+  (e.g. too much of a portfolio in one stock) is visible without leaving
+  the dashboard. A finer-grained precursor to FR7's cross-account
+  asset-type pie chart — FR7 buckets whole accounts by their
+  `account_type` label; this parses individual positions within one
+  account. See D31.
+
 ## 3. Non-goals (v1)
 
 - Not a transaction-level budgeting tool (Simplifi's job).
@@ -1547,3 +1558,49 @@ Previously open questions, now resolved:
   preceded by `"Previous "`. With this, `ManualEntryProvider` (task 15)
   is no longer needed for any institution in this app's current scope —
   parked indefinitely rather than built, since nothing left requires it.
+- **D31 — Holdings breakdown for Vanguard Brokerage, terminal-native bar
+  chart, no schema-version bump** (FR22, §13, Phase M): every account
+  today reports exactly one balance — accurate for net worth, but it
+  hides composition. Scoped to Vanguard Brokerage only (the one account
+  type that actually lists individual positions today); rendered as
+  proportional horizontal bars, not a pie chart — ratatui has no native
+  pie/donut widget, and a bar breakdown is the terminal-native
+  substitute. `Holding { symbol, description, value }` is extracted as
+  a flat list with **no asset-class label baked in** — classification
+  (`crates/core/src/holdings.rs`'s `classify`/`bucket`) is a pure,
+  independently-testable function computed at read-time over
+  already-persisted data, not part of any parser or the schema. This is
+  deliberate: it means reclassifying a holding later never needs a new
+  statement parse or a schema migration, and it's what makes "eventually
+  per-ticker" (flagging e.g. one stock being too large a share of the
+  portfolio) free later — same underlying `Vec<Holding>`, just
+  aggregated differently. `Asset` gained `holdings: Option<Vec<Holding>>`
+  and `Account` gained a default-implemented `holdings()` method (so no
+  other `Account` impl needed to change); `AccountRecord` gained the
+  matching optional field with the same `#[serde(skip_serializing_if =
+  "Option::is_none", default)]` precedent `error_message` already
+  established — confirmed against `migration.rs` that a purely additive
+  optional field needs no `CURRENT_SCHEMA_VERSION` bump. Holdings are
+  deliberately **not** persisted into `ProcessedFilesLedger` — only ever
+  available fresh off an actual statement parse, never carried forward
+  on a "no new statement this run" fetch. A holdings breakdown
+  temporarily not showing on such a run is a harmless, self-healing UI
+  degradation, not worth extending the ledger's on-disk shape a second
+  time in the same session `last_processed_mtime_secs` already needed a
+  `#[serde(default)]` fix for.
+  **Addendum**: `VanguardStatementParser`'s holdings extraction (the
+  `"Sweep program"`/`"Mutual funds"` tables) is verified against a real
+  Cash Plus/Brokerage statement (field labels/section headers only,
+  never a real balance/account number/name). One real finding this
+  corrected: the account turned out to hold Vanguard *mutual* index
+  funds (e.g. `"VANGUARD BALANCED INDEX ADMIRAL CL"`), not ETFs or
+  individual stocks — none contain the literal phrase `"index fund"` or
+  `"etf"` the original classification heuristic looked for, only
+  `"INDEX"` embedded in the fund's own naming convention. The heuristic
+  was broadened accordingly, and the bucket's label changed from `"ETF"`
+  to the more accurate `"Fund"` (covering both ETFs and mutual funds —
+  the same signal either way for the concentration risk this feature
+  exists to surface). Both tables show two dates' worth of balance per
+  row/line; the *last* dollar amount is taken as current, following the
+  same earlier-date-first, current-date-last ordering this statement
+  uses everywhere else it shows a two-point comparison.

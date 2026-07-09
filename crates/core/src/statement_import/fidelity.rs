@@ -59,6 +59,7 @@ impl StatementParser for FidelityStatementParser {
                     // app's scope (spec FR1: 401(k)) — always an asset,
                     // no statement inspection needed.
                     category: Category::Asset,
+                    holdings: vec![],
                 })
             }
             _ => Err(ParseError::AmbiguousMatch),

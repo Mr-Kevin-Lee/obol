@@ -89,6 +89,7 @@ fn record_to_account(record: &AccountRecord) -> Box<dyn Account> {
             r#type,
             balance,
             status,
+            holdings: record.holdings().map(|h| h.to_vec()),
         }),
     }
 }
@@ -105,6 +106,7 @@ mod tests {
             r#type: "checking".into(),
             balance: Some(balance),
             status: AccountStatus::Ok,
+            holdings: None,
         }
     }
 
@@ -127,6 +129,7 @@ mod tests {
             status: AccountStatus::Error {
                 message: "timeout".into(),
             },
+            holdings: None,
         }
     }
 
@@ -184,6 +187,7 @@ mod tests {
             currency: "USD".into(),
             status: Status::Ok,
             error_message: None,
+            holdings: None,
         }
     }
 
@@ -198,6 +202,7 @@ mod tests {
             currency: "USD".into(),
             status: Status::Error,
             error_message: Some("timeout".into()),
+            holdings: None,
         }
     }
 

@@ -129,6 +129,7 @@ mod tests {
                 r#type: "checking".into(),
                 balance: Some(100.0),
                 status: AccountStatus::Ok,
+                holdings: None,
             })])
         }
     }

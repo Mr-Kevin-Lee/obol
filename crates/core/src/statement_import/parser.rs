@@ -9,7 +9,7 @@ use crate::statement_import::apple_card::AppleCardStatementParser;
 use crate::statement_import::chase::ChaseStatementParser;
 use crate::statement_import::fidelity::FidelityStatementParser;
 use crate::statement_import::vanguard::VanguardStatementParser;
-use crate::Category;
+use crate::{Category, Holding};
 
 /// What `StatementImportProvider::fetch` expects to find in a
 /// statement, derived from the calling `SourceConfig` — lets a parser
@@ -45,6 +45,13 @@ pub struct ParsedStatement {
     /// path, since an existing source's category is already fixed at
     /// add-time, same as every other provider.
     pub category: Category,
+    /// Individual positions within this account (spec D31) — empty for
+    /// every layout except one that actually lists holdings (currently
+    /// only Vanguard's Cash Plus/Brokerage layout). Deliberately a
+    /// plain `Vec`, not `Option<Vec<_>>`, consistent with `balance: f64`
+    /// above — an empty vec is already the "no holdings" state, no
+    /// extra `None` branch needed at any call site.
+    pub holdings: Vec<Holding>,
 }
 
 #[derive(Debug, PartialEq)]

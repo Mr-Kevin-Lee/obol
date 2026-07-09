@@ -73,6 +73,7 @@ impl Provider for PlaidProvider {
                 r#type: source.account_type.clone(),
                 balance,
                 status: AccountStatus::Ok,
+                holdings: None,
             }),
             Category::Liability => Box::new(Liability {
                 account_key,

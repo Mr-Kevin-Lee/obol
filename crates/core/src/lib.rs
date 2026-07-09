@@ -1,5 +1,6 @@
 mod account;
 mod engine;
+mod holdings;
 mod item_usage;
 mod item_usage_storage;
 mod keychain;
@@ -18,8 +19,9 @@ mod statement_import;
 mod statement_import_storage;
 mod storage;
 
-pub use account::{Account, AccountStatus, Asset, Liability};
+pub use account::{Account, AccountStatus, Asset, Holding, Liability};
 pub use engine::{run, run_and_save, CredentialSource, RunAndSaveResult};
+pub use holdings::{bucket, classify, AssetClass};
 pub use item_usage::{ItemUsageCounter, PLAID_ITEM_LIMIT, PLAID_ITEM_WARNING_THRESHOLD};
 pub use item_usage_storage::{load_or_init_item_usage, save_item_usage, ItemUsageStorageError};
 pub use keychain::{

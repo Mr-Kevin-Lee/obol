@@ -336,6 +336,7 @@ fn account_to_record(source: &SourceConfig, account: &dyn Account) -> AccountRec
         currency: CURRENCY.to_string(),
         status,
         error_message,
+        holdings: account.holdings().map(|h| h.to_vec()),
     }
 }
 
@@ -350,6 +351,7 @@ fn error_record(source: &SourceConfig, message: String) -> AccountRecord {
         currency: CURRENCY.to_string(),
         status: Status::Error,
         error_message: Some(message),
+        holdings: None,
     }
 }
 
@@ -418,6 +420,7 @@ mod tests {
                             r#type: source.account_type.clone(),
                             balance: Some(100.0),
                             status: AccountStatus::Ok,
+                            holdings: None,
                         }),
                     };
                     Ok(vec![account])
@@ -854,6 +857,7 @@ mod tests {
             currency: "USD".into(),
             status: Status::Ok,
             error_message: None,
+            holdings: None,
         };
         let bad_record = AccountRecord {
             account_key: "sha256:should-also-never-appear".into(),
@@ -865,6 +869,7 @@ mod tests {
             currency: "USD".into(),
             status: Status::Error,
             error_message: Some("timeout".into()),
+            holdings: None,
         };
 
         tracing::subscriber::with_default(subscriber, || {

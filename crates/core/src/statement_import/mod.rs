@@ -132,7 +132,7 @@ impl Provider for StatementImportProvider {
             ))
         })?;
 
-        let (balance, _as_of_date, account_identifier) = match candidate {
+        let (balance, _as_of_date, account_identifier, holdings) = match candidate {
             Some((path, filename, content_hash, mtime_secs)) => {
                 let parser = parser_for(&source.institution).ok_or_else(|| {
                     ProviderError::Other(format!(
@@ -173,7 +173,16 @@ impl Provider for StatementImportProvider {
                     ProviderError::Other(format!("could not save processed-files ledger: {e}"))
                 })?;
 
-                (parsed.balance, parsed.as_of_date, parsed.account_identifier)
+                // Spec D31: holdings deliberately aren't persisted into
+                // the ledger — only ever available fresh off an actual
+                // parse. `None` (rather than `Some(vec![])`) whenever
+                // there's nothing to show, whether that's because this
+                // institution's parser never populates holdings at all,
+                // or because this particular statement happened to have
+                // none — the dashboard treats both the same either way.
+                let holdings = (!parsed.holdings.is_empty()).then_some(parsed.holdings);
+
+                (parsed.balance, parsed.as_of_date, parsed.account_identifier, holdings)
             }
             None => {
                 // Nothing new since last run — a dropbox only gets a
@@ -181,7 +190,11 @@ impl Provider for StatementImportProvider {
                 // not an error. Report the same balance/identifier the
                 // last successful parse produced, so account_key stays
                 // stable (D15) and the dashboard doesn't go blank
-                // between statements.
+                // between statements. Holdings are never carried
+                // forward this way (spec D31) — a holdings breakdown
+                // temporarily not showing on a no-new-statement run is
+                // a harmless, self-healing UI degradation, not worth
+                // extending the ledger's on-disk shape for.
                 let (balance, as_of_date, account_identifier) =
                     ledger.last_known(&source.id).ok_or_else(|| {
                         ProviderError::Other(format!(
@@ -191,7 +204,12 @@ impl Provider for StatementImportProvider {
                             watch_dir.display()
                         ))
                     })?;
-                (balance, as_of_date.to_string(), account_identifier.to_string())
+                (
+                    balance,
+                    as_of_date.to_string(),
+                    account_identifier.to_string(),
+                    None,
+                )
             }
         };
 
@@ -204,6 +222,7 @@ impl Provider for StatementImportProvider {
                 r#type: source.account_type.clone(),
                 balance: Some(balance),
                 status: AccountStatus::Ok,
+                holdings,
             }),
             Category::Liability => Box::new(Liability {
                 account_key,
@@ -356,6 +375,42 @@ mod tests {
         assert_eq!(accounts.len(), 1);
         assert_eq!(accounts[0].balance(), Some(1234.56));
         assert_eq!(accounts[0].institution(), "Chase");
+
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[tokio::test]
+    async fn a_parser_that_never_produces_holdings_leaves_the_account_without_any() {
+        // Spec D31: Chase's parser never populates ParsedStatement.holdings
+        // (only Vanguard's Cash Plus/Brokerage layout does, added in a
+        // follow-on change) — confirms a fresh parse correctly leaves
+        // Asset.holdings as None rather than Some(vec![]).
+        let dir = temp_dir("no-holdings-parser");
+        fs::write(dir.join("statement.pdf"), fixture_bytes()).unwrap();
+
+        let provider = StatementImportProvider::new(ledger_path(&dir));
+        let accounts = provider.fetch(&source(&dir, None), None).await.unwrap();
+
+        assert_eq!(accounts[0].holdings(), None);
+
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[tokio::test]
+    async fn a_no_new_statement_run_never_carries_holdings_forward() {
+        // Spec D31: holdings aren't persisted into the ledger — even if
+        // a fresh parse had produced some, a no-new-statement run's
+        // fallback path must report holdings: None, only the balance
+        // carries forward via last_known().
+        let dir = temp_dir("no-holdings-fallback");
+        fs::write(dir.join("statement.pdf"), fixture_bytes()).unwrap();
+
+        let provider = StatementImportProvider::new(ledger_path(&dir));
+        let first = provider.fetch(&source(&dir, None), None).await.unwrap();
+        let second = provider.fetch(&source(&dir, None), None).await.unwrap();
+
+        assert_eq!(first[0].balance(), second[0].balance());
+        assert_eq!(second[0].holdings(), None);
 
         fs::remove_dir_all(&dir).ok();
     }

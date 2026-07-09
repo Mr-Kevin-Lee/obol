@@ -19,7 +19,7 @@ use ratatui::widgets::{Block, Borders, List, ListItem, Paragraph};
 use ratatui::Frame;
 use ratatui::Terminal;
 
-use obol_core::{AccountRecord, Category, NetWorth, Snapshot, Status};
+use obol_core::{AccountRecord, AssetClass, Category, Holding, NetWorth, Snapshot, Status};
 
 // Okabe–Ito palette (§13) — chosen over red/green specifically so
 // status reads correctly under every common form of color vision.
@@ -74,34 +74,61 @@ pub fn run(snapshot: &Snapshot, previous: Option<&Snapshot>) -> io::Result<Dashb
 }
 
 fn draw(frame: &mut Frame, snapshot: &Snapshot, previous: Option<&Snapshot>) {
+    // Spec D31: pooled across every holdings-bearing account in this
+    // snapshot (today, at most one — Vanguard Brokerage), not just the
+    // first one found. Absent entirely (not an empty panel) whenever no
+    // account has any — most accounts/snapshots never will.
+    let all_holdings: Vec<Holding> = snapshot
+        .accounts
+        .iter()
+        .filter_map(|record| record.holdings())
+        .flatten()
+        .cloned()
+        .collect();
+    let buckets = obol_core::bucket(&all_holdings);
+
+    let mut constraints = vec![
+        Constraint::Length(3), // title
+        Constraint::Length(4), // net worth + change-since-last-run
+    ];
+    if !buckets.is_empty() {
+        // +2 for the panel's own border/title lines, one line per bucket.
+        constraints.push(Constraint::Length(buckets.len() as u16 + 2));
+    }
+    constraints.push(Constraint::Min(3)); // assets
+    constraints.push(Constraint::Min(3)); // liabilities
+    constraints.push(Constraint::Length(1)); // footer
+
     let areas = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Length(3), // title
-            Constraint::Length(4), // net worth + change-since-last-run
-            Constraint::Min(3),    // assets
-            Constraint::Min(3),    // liabilities
-            Constraint::Length(1), // footer
-        ])
+        .constraints(constraints)
         .split(frame.area());
 
     draw_title(frame, areas[0]);
     draw_net_worth(frame, areas[1], snapshot, previous);
+
+    let mut next = 2;
+    if !buckets.is_empty() {
+        draw_holdings_breakdown(frame, areas[next], &buckets);
+        next += 1;
+    }
     draw_group(
         frame,
-        areas[2],
+        areas[next],
         "Assets",
         &snapshot.accounts,
         Category::Asset,
     );
+    next += 1;
     draw_group(
         frame,
-        areas[3],
+        areas[next],
         "Liabilities",
         &snapshot.accounts,
         Category::Liability,
     );
-    draw_footer(frame, areas[4]);
+    next += 1;
+    draw_footer(frame, areas[next]);
 }
 
 fn draw_title(frame: &mut Frame, area: Rect) {
@@ -174,6 +201,49 @@ fn change_since_previous(current: NetWorth, previous: Option<&Snapshot>) -> Opti
         format!("{sign}${:.2} since {date}", delta.abs()),
         Style::default().fg(color),
     )))
+}
+
+/// One horizontal bar per asset class (cash/ETF/individual stock, spec
+/// D31) — the terminal-native stand-in for a pie chart agreed on for
+/// this feature, since ratatui has no native pie/donut widget. `buckets`
+/// is already-aggregated `(AssetClass, dollar total)` pairs from
+/// `obol_core::bucket` — this function only renders, it never touches
+/// raw holdings or classification itself.
+fn draw_holdings_breakdown(frame: &mut Frame, area: Rect, buckets: &[(AssetClass, f64)]) {
+    const BAR_WIDTH: usize = 30;
+    let total: f64 = buckets.iter().map(|(_, value)| value).sum();
+
+    let lines: Vec<Line> = buckets
+        .iter()
+        .map(|(class, value)| {
+            let fraction = if total > 0.0 { value / total } else { 0.0 };
+            let filled = ((fraction * BAR_WIDTH as f64).round() as usize).min(BAR_WIDTH);
+            let bar = format!("{}{}", "█".repeat(filled), "░".repeat(BAR_WIDTH - filled));
+
+            Line::from(vec![
+                Span::raw(format!("{:<16}", class.label())),
+                Span::styled(bar, Style::default().fg(asset_class_color(*class))),
+                Span::raw(format!("  {:>5.1}%  ${value:.2}", fraction * 100.0)),
+            ])
+        })
+        .collect();
+
+    frame.render_widget(
+        Paragraph::new(lines).block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title("Holdings Breakdown"),
+        ),
+        area,
+    );
+}
+
+fn asset_class_color(class: AssetClass) -> Color {
+    match class {
+        AssetClass::Cash => BLUE,
+        AssetClass::Fund => BLUISH_GREEN,
+        AssetClass::Stock => VERMILLION,
+    }
 }
 
 fn draw_group(

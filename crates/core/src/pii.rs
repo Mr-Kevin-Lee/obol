@@ -42,6 +42,7 @@ pub fn scrub(raw: &RawAccountData, account_salt: &str) -> AccountRecord {
         currency: raw.currency.clone(),
         status: raw.status,
         error_message: raw.error_message.clone(),
+        holdings: None,
     }
 }
 

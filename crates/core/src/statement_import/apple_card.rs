@@ -63,6 +63,7 @@ impl StatementParser for AppleCardStatementParser {
             as_of_date: extract_as_of_date(after_balance).unwrap_or_default(),
             account_identifier,
             category: Category::Liability,
+            holdings: vec![],
         })
     }
 }

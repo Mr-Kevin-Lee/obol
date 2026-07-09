@@ -148,6 +148,7 @@ mod tests {
             currency: "USD".into(),
             status: Status::Ok,
             error_message: None,
+            holdings: None,
         }
     }
 

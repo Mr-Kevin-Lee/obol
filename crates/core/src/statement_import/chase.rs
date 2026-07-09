@@ -68,6 +68,7 @@ impl StatementParser for ChaseStatementParser {
                     as_of_date: extract_statement_date(text).unwrap_or_default(),
                     account_identifier: account.last4.clone(),
                     category: detect_category(text),
+                    holdings: vec![],
                 })
             }
             _ => Err(ParseError::AmbiguousMatch),
