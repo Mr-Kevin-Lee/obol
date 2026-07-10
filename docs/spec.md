@@ -1036,4 +1036,3 @@ Previously open questions, now resolved:
   large feature, starting with what's already computable from existing
   snapshot data and ending with the hardest-to-automate, manually-tracked
   external metrics.
-
