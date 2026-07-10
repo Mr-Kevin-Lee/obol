@@ -1,16 +1,17 @@
-# Financial Health Dashboard — Specification
+# Obol — Financial Health Dashboard: Specification
 
 Status: Ready for implementation
 Purpose: Input to design and implementation phases (spec-driven development)
 
-**Starting point for implementation:** begin with the v0.1 scope in §15 —
+**Starting point for implementation:** begin with the v0.1 scope in §16 —
 core library + CLI/TUI. Part 1 (§1–3) is the functional requirements and
-should read as the "what" and "why." Part 2 (§4–16) is the "how" — security
+should read as the "what" and "why." Part 2 (§4–17) is the "how" — security
 design, architecture, tech stack, and phasing. **Development is test-first
 for all core-library logic (§5, D9)** — write the failing test before the
-implementation. Don't build the HTTP interface (§6.1, §14, D7) until v0.1/v0.2
+implementation. Don't build the HTTP interface (§6.1, §15, D7) until v0.1/v0.2
 are complete and its security design has actually been done — see D7's
-explicit deferral.
+explicit deferral. Recommendation tracking (§13, FR23–FR28) is a later,
+separately-phased feature (v0.5, §16) — not part of v0.1's initial scope.
 
 **v0.1 broken into commit-sized tasks:** see [tasks.md](tasks.md).
 
@@ -55,16 +56,16 @@ this tool owns "what is my financial health right now."
 - **FR7 (stretch)** — Net worth broken down by asset type (cash, retirement,
   brokerage, 529, RSU/stock), presented as a pie chart. See §12.
 - **FR8** — Account data is displayed in an easy-to-read format, with assets
-  and liabilities visually grouped separately. See §13.
+  and liabilities visually grouped separately. See §14.
 - **FR9** — The UI is colorblind-friendly — status and category are never
-  conveyed by color alone. See §13.
+  conveyed by color alone. See §14.
 - **FR10 (stretch)** — Identify trends in savings/spending, once at least
-  two historical snapshots exist. See §13.
+  two historical snapshots exist. See §14.
 
 ### 2.3 Snapshots & history
 
 - **FR11** — Every run creates a snapshot of each connected account.
-  Long-term, this runs on a schedule (e.g. biweekly). See §15 (v0.4).
+  Long-term, this runs on a schedule (e.g. biweekly). See §16 (v0.4).
 - **FR12** — Snapshots contain no personally identifiable information. See
   §11.1.
 - **FR13** — Snapshots are stored as versioned JSON. See §11.2.
@@ -113,6 +114,28 @@ this tool owns "what is my financial health right now."
   `account_type` label; this parses individual positions within one
   account. See D31.
 
+### 2.9 Recommendation / financial health tracking
+
+- **FR23** — The dashboard tracks financial-plan recommendations (e.g.
+  emergency fund coverage, savings rate, retirement plan probability of
+  success, estate-document completion) as discrete metrics with a clear
+  status, rather than leaving them static in a one-time PDF. See §13.
+- **FR24** — Threshold-based metrics are displayed with a traffic-light
+  status (red/yellow/green, or more bands where appropriate), computed from
+  either snapshot data or user-supplied inputs. See §13.1, §13.2.
+- **FR25** — Checklist-style recommendations (e.g. estate documents,
+  insurance in place) are tracked as simple complete/incomplete items, not
+  forced into a threshold model that doesn't fit them. See §13.1.
+- **FR26** — All thresholds and target values are user-editable, not
+  hard-coded to any single financial plan revision, since these change at
+  each annual plan review. See §13.2.
+- **FR27** — Recommendation status is displayed using the same
+  colorblind-friendly, never-color-alone treatment as the rest of the
+  dashboard. See §13.2, §14.
+- **FR28** — Recommendation tracking rolls out incrementally rather than
+  all at once, prioritized by how automatable each recommendation actually
+  is. See §13.3, §16.
+
 ## 3. Non-goals (v1)
 
 - Not a transaction-level budgeting tool (Simplifi's job).
@@ -154,7 +177,7 @@ is enabled on this machine as a baseline.
   with `kSecAttrAccessibleWhenUnlockedThisDeviceOnly` (never synced to iCloud
   Keychain, inaccessible while the device is locked), scoped to this app's
   own access group so no other application can read it.
-- **Language choice is driven by this requirement (decision D6, §16):**
+- **Language choice is driven by this requirement (decision D6, §17):**
   secrets are wrapped in `secrecy` types (preventing accidental exposure via
   `Debug`/logging) and zeroized on drop via `zeroize`, giving a deterministic,
   compiler-enforced cleanup point instead of Python's GC-timed collection.
@@ -166,7 +189,7 @@ is enabled on this machine as a baseline.
   risk, not an absolute guarantee.
 - No plaintext logging of credentials, full account numbers, or raw
   provider-API responses, at any log level, ever.
-- **This app's own Plaid `client_id`/`secret` (decision D20, §16)** — not
+- **This app's own Plaid `client_id`/`secret` (decision D20, §17)** — not
   the per-Item access token, which is already covered above, but the
   credential pair this app itself uses to authenticate to Plaid's API —
   is stored in Keychain, the same as the access token, prompted for once
@@ -203,7 +226,7 @@ is enabled on this machine as a baseline.
 - Any local server component binds to `127.0.0.1` only, never `0.0.0.0` —
   the dashboard should never be reachable from the local network, including
   on shared Wi-Fi. This applies directly to the v0.3 local HTTP interface
-  (§16, D7).
+  (§17, D7).
 - Browser automation uses a fresh, isolated browser context per run rather
   than a persistent profile, so bank session cookies don't accumulate on
   disk between runs.
@@ -217,7 +240,7 @@ is enabled on this machine as a baseline.
 - No telemetry, analytics, or crash reporting phones home by default. If
   ever added, it must be explicitly opt-in, clearly disclosed, and must
   never include balances or account identifiers.
-- **Dependency vulnerability scanning (decision D21, §16):** `Cargo.lock`
+- **Dependency vulnerability scanning (decision D21, §17):** `Cargo.lock`
   pinning (above) guards against a compromised *update* slipping in
   silently — it doesn't catch a **known** CVE in a dependency already
   pinned. Run `cargo audit` periodically (`make audit`) and deliberately
@@ -260,7 +283,7 @@ loop):
   is where "does the HTTP request/response actually work" gets verified,
   distinct from the unit-tested `Provider` trait contract above.
 - `fantoccini`/WebDriver behavior against a real bank-style login flow —
-  this is exactly what the v0.1 spike (§15) exists to validate; it's a
+  this is exactly what the v0.1 spike (§16) exists to validate; it's a
   go/no-go check, not something to force into a TDD red-green loop against
   a live third-party site.
 
@@ -325,7 +348,7 @@ stay around long-term, for different purposes (FR19, FR20, §2.6):
 
 Because both sit on the same core, nothing built for the CLI/TUI phase is
 throwaway work — the HTTP interface phase adds a second front end, not a
-rewrite. See §15 for the phased build order and §14 for the specific
+rewrite. See §16 for the phased build order and §15 for the specific
 libraries behind each interface.
 
 ### 6.2 Data flow (the default run)
@@ -372,7 +395,7 @@ against an empty source list and render a blank dashboard.
    (§11.2).
 4. `core::storage::load_recent_snapshots(n)` — independent of steps 2–3;
    feeds the Sources screen's "last updated N runs ago" and the stretch
-   trend chart (§13), not the net-worth figure itself.
+   trend chart (§14), not the net-worth figure itself.
 5. `core::networth::calculate(&snapshot)` — pure function, depends
    **only** on the fresh snapshot from step 2, not on step 4's history.
 6. **CLI-only, not core:** render (`ratatui`) using the snapshot, net
@@ -381,7 +404,7 @@ against an empty source list and render a blank dashboard.
 Steps 3 and 4 have no data dependency on each other and can run
 concurrently; step 5 depends only on step 2's output, not step 4's.
 
-**The `CredentialSource` callback (decision D12, §16).** §6.1 requires
+**The `CredentialSource` callback (decision D12, §17).** §6.1 requires
 core to contain no UI code, but §8 requires interactive prompting for
 webdriver credentials and the manual-entry balance on every run — both
 needed *before* `provider.fetch()` can be called, since `fetch()` takes
@@ -399,13 +422,13 @@ trait CredentialSource {
 ```
 
 The CLI implements this with a masked terminal prompt; the future HTTP
-interface (§14, D7) implements it as a form post. This is what lets both
+interface (§15, D7) implements it as a form post. This is what lets both
 front ends share `core::snapshot::run()` unchanged, consistent with
 §6.1's "same core, two interfaces."
 
 ### 6.3 Statement import (parked/parallel alternative)
 
-A third `Provider` implementation (decision D28, §16), alongside Plaid and
+A third `Provider` implementation (decision D28, §17), alongside Plaid and
 WebDriver: parses the current balance out of a PDF statement the user has
 already downloaded (manually, or auto-saved via a Mail rule — that plumbing
 is outside this app) into a per-source directory
@@ -439,7 +462,7 @@ otherwise.**
 | Institution | Account(s) | Recommended path | Notes |
 |---|---|---|---|
 | Chase | Checking, credit card | Plaid (free Trial tier) | Well-supported OAuth institution — confirmed working end-to-end against real Production data |
-| Vanguard | Brokerage, 529, money market | **Browser automation** (revised — see D25) | **Confirmed via real Production testing: Plaid does not support Vanguard at all**, not a sub-account nuance as originally assumed. Reactivates the fantoccini spike (§15, task 21) — Vanguard is now a concrete real target, not a parked "no institution available" item |
+| Vanguard | Brokerage, 529, money market | **Browser automation** (revised — see D25) | **Confirmed via real Production testing: Plaid does not support Vanguard at all**, not a sub-account nuance as originally assumed. Reactivates the fantoccini spike (§16, task 21) — Vanguard is now a concrete real target, not a parked "no institution available" item |
 | Fidelity | 401k | Plaid, **pending Compliance Center approval** (see D25) | **Confirmed via real Production testing:** Plaid connects but returns "no eligible accounts" — matches the Compliance-Center-gating risk already flagged below, now observed directly rather than theoretical. Blocked until that approval is requested and granted, or abandoned in favor of browser automation like Vanguard |
 | Morgan Stanley / E-Trade | Stocks, RSUs | Plaid | Not yet tested against real Production — confirm before assuming it works, given Vanguard/Fidelity's results |
 | Apple Card (Goldman Sachs) | Credit card | **Statement import** (revised — see D30) | Originally planned as manual entry (D3) — no aggregator/browser path exists, and it was assumed no downloadable statement existed either. Corrected: the Wallet app exports a PDF statement, same as every other statement-import institution, so it uses that path instead of ever needing `ManualEntryProvider` built. |
@@ -454,7 +477,7 @@ live automation isn't practical. Chase is the reference implementation.
 **Why Plaid first:** Plaid offers a free Trial plan for new US/Canada teams
 supporting up to 10 live Production accounts with real data — comfortably
 covers your 5 non-Apple-Card institutions. No cost, no per-call billing,
-until you exceed 10 linked accounts. Decision D22 (§16) separately
+until you exceed 10 linked accounts. Decision D22 (§17) separately
 confirmed via real Sandbox testing that the Balance product alone —
 call-based, no recurring per-account fee — returns usable current-balance
 data for every account type this project needs, so Investments and
@@ -475,7 +498,7 @@ status is pending Compliance Center approval):
 | Morgan Stanley/E-Trade | Stocks/RSUs | 1 (unconfirmed) |
 | **Total** | | **~2-3 of 10** once Fidelity's status resolves, well under budget |
 
-**Balance is the only Plaid product this project needs (decision D22, §16)**
+**Balance is the only Plaid product this project needs (decision D22, §17)**
 — confirmed via real Sandbox testing that it returns usable current-balance
 data for checking, brokerage, retirement, and credit accounts alike, so
 Investments and Liabilities (each a separate, per-account/month-billed
@@ -501,14 +524,14 @@ product) were dropped from the client entirely.
   Center matches this exactly. Next step is requesting that approval via
   the Plaid dashboard, not a code change.
 
-**Access token persistence:** resolved in decision D2 (§16) — Plaid access
+**Access token persistence:** resolved in decision D2 (§17) — Plaid access
 tokens are stored in macOS Keychain, scoped and revocable independent of any
-real bank credentials. See §16 for the reasoning.
+real bank credentials. See §17 for the reasoning.
 
 ### 7.1 Item usage tracking & API rate limits
 
 **Item usage must be surfaced in both interfaces (FR21, §2.7; decision D8,
-§16).** Plaid does not expose an API to query how many of your 10 Trial
+§17).** Plaid does not expose an API to query how many of your 10 Trial
 Items you've used — there's no "remaining quota" endpoint. That number has
 to be tracked by the app itself, and it has to be a **lifetime counter**,
 not a count of currently-configured Plaid sources, since `/item/remove`
@@ -557,7 +580,7 @@ existing guidance to do iterative testing there (§7).
 - Every run prompts for credentials needed by that run's active sources
   (masked input, works identically in CLI/TUI and the HTTP interface) —
   except Plaid sources, which use a stored access token instead (decision
-  D2, §16).
+  D2, §17).
 - **Implementation:** this prompting is threaded through the core snapshot
   engine via the `CredentialSource` trait (§6.2, decision D12) rather than
   core importing a UI crate directly — one callback interface, implemented
@@ -583,7 +606,7 @@ existing guidance to do iterative testing there (§7).
   attempt.
 - Retries apply to transient errors (timeouts, 5xx, connection resets) only —
   not to auth failures, which fail fast.
-- **Implementation: `tokio-retry`'s `RetryIf`** (decision D10, §16) —
+- **Implementation: `tokio-retry`'s `RetryIf`** (decision D10, §17) —
   `ExponentialBackoff::from_millis(2000).map(jitter).take(3)` for the
   strategy, with a `condition` closure that inspects the error and returns
   `false` for auth failures so they short-circuit instead of retrying. The
@@ -598,7 +621,7 @@ existing guidance to do iterative testing there (§7).
 
 The scenarios above cover one source failing transiently. The following are
 distinct failure modes, worked through explicitly rather than left as
-implicit gaps (decision D13, §16):
+implicit gaps (decision D13, §17):
 
 - **All sources fail in one run.** Net worth (§12) is only ever computed
   over `status: "ok"` accounts — if that set is empty, the dashboard does
@@ -638,7 +661,7 @@ implicit gaps (decision D13, §16):
   diagnosable message distinct from "login failed" (e.g. "chromedriver not
   found on PATH" vs. "authentication failed").
 - **Concurrent runs are serialized with an advisory file lock**, not left
-  to race — a scheduled `launchd` run (§15, v0.4) overlapping with an
+  to race — a scheduled `launchd` run (§16, v0.4) overlapping with an
   interactive session could otherwise double-write `sources.yaml`, corrupt
   an in-progress atomic write, or double-increment the Plaid Item counter
   (§7.1). A single lock file (`.lock` in the app's storage directory, §4)
@@ -813,7 +836,7 @@ fields, since Plaid Link is a hosted authentication flow:
    account it is. No separate webhook server needed for a single-user
    local tool.
 
-**Why up to 6 hours (decision D18, §16):** that's Plaid's own guarantee
+**Why up to 6 hours (decision D18, §17):** that's Plaid's own guarantee
 window for how long a completed Link session's result stays retrievable
 via `/link/token/get` — not a typical completion time. Most sessions
 complete in minutes, but the Hosted Link flow is explicitly built for
@@ -855,10 +878,10 @@ shouldn't require a schema version bump):
 - Assets: `checking`, `money_market`, `brokerage`, `retirement_401k`, `529`, `rsu_stock`
 - Liabilities: `credit_card`, `mortgage`, `student_loan`
 
-**Shared `Account` trait (decision D11, §16).** Mirroring the `Provider`
+**Shared `Account` trait (decision D11, §17).** Mirroring the `Provider`
 trait's role in §10, `Asset` and `Liability` implement one common `Account`
 trait rather than being distinguished by scattered `if category == ...`
-checks throughout net worth calc (§12) and dashboard rendering (§13):
+checks throughout net worth calc (§12) and dashboard rendering (§14):
 
 ```rust
 trait Account {
@@ -878,7 +901,7 @@ struct Liability { account_key: String, institution: String, r#type: String, bal
 `Provider::fetch` (§10) returns `Vec<Box<dyn Account>>` instead of a bare
 struct — a provider already knows a source's category from `SourceConfig`
 (the `category:` field in `sources.yaml`), so it constructs an `Asset` or
-`Liability` directly. Net worth calc (§12) and dashboard rendering (§13)
+`Liability` directly. Net worth calc (§12) and dashboard rendering (§14)
 then only ever call `.net_worth_contribution()` / `.balance()` /
 `.status()` through the trait, never branch on category by hand. This is a
 runtime/domain-layer abstraction only — it doesn't change the on-disk JSON
@@ -886,7 +909,7 @@ schema (§11.2), which stays a flat `category` field per record; the storage
 layer converts trait objects to/from that flat shape at the serialization
 boundary.
 
-**Balance representation (decision D16, §16):** kept as `f64` throughout —
+**Balance representation (decision D16, §17):** kept as `f64` throughout —
 the trait, the schema, and the summation in §12 — rather than a
 decimal/cents-based type. This is a glance-at-it net worth dashboard, not
 an accounting/reconciliation tool, so sub-cent float drift across a
@@ -902,7 +925,7 @@ institution name, a locally-generated, **salted** pseudonymous account key
 storing — or being reversible to — the real account number), category,
 type, balance, currency, and timestamp.
 
-**Salt storage (decision D15, §16):** the salt is generated once, per
+**Salt storage (decision D15, §17):** the salt is generated once, per
 source, at the moment that source is added (§10.1's add flow), and stored
 alongside that source's entry in `sources.yaml` (`account_salt` field) —
 not regenerated per run (which would break run-over-run tracking) and not
@@ -919,11 +942,11 @@ Storage hardening (see §4 for full rationale):
 - Default storage path is outside any cloud-synced folder (e.g.
   `~/Library/Application Support/FinancialDashboard/`), not `~/Documents`,
   `~/Desktop`, iCloud Drive, or Dropbox.
-- **Storage path is fixed (not configurable) in v1** (decision D17, §16) —
+- **Storage path is fixed (not configurable) in v1** (decision D17, §17) —
   deferred rather than designed now, since an override mechanism
   immediately reopens the exact question this bullet exists to close
   (validating the override doesn't land in a cloud-synced folder).
-  Configurability is a named v0.4 stretch item (§15).
+  Configurability is a named v0.4 stretch item (§16).
 
 ### 11.2 Snapshot JSON schema
 
@@ -970,7 +993,7 @@ without invalidating historical snapshots.
   stored files are never rewritten.
 - New account types are additive and don't require a version bump; only
   breaking structural changes (field renames/removals) do.
-- **Forward compatibility, not just backward (decision D14, §16).** A
+- **Forward compatibility, not just backward (decision D14, §17).** A
   snapshot written by a **newer** version of the app (e.g. after
   reinstalling an older binary, or during a downgrade) is not rejected
   outright either. Deserialization relies on serde's default lenient
@@ -994,10 +1017,148 @@ without invalidating historical snapshots.
 - **Stretch — asset breakdown pie chart:** group by `type` (cash, retirement,
   brokerage, 529, RSU/stock), rendered as a pie chart.
 
-## 13. Dashboard UI
+## 13. Recommendation tracking (financial health metrics)
 
-Two screens: the **net worth dashboard** (default view) and a **Sources**
-screen for managing connections (§10.1).
+Your advisor's plan (and any future revision of it) contains a set of
+concrete, checkable recommendations — an emergency fund target, a savings
+rate, insurance coverage, estate documents, a retirement plan's probability
+of success. Right now these live in a PDF you read once. This section
+generalizes them into first-class, continuously-visible metrics — the same
+"don't bury the important number" treatment already given to the Plaid Item
+usage counter (§7.1), just applied more broadly (FR23, §2.9).
+
+### 13.1 Recommendation types
+
+Not every recommendation fits the same shape, so four distinct kinds are
+modeled rather than forcing everything into one:
+
+**A. Threshold metrics computed from snapshot data alone** — no new user
+input needed beyond what Obol already fetches:
+- Emergency fund coverage: cash + money-market balances (already categorized
+  as `checking`/`money_market` types, §11, surfaced through the same
+  `Account` trait that §12's net worth calc already relies on) divided by a
+  target monthly-expense figure. Editable default bands: <6 months red, 6–9
+  months yellow, >9 months green (illustrative starting point — see FR26 on
+  editability).
+
+**B. Threshold metrics needing a small amount of user-supplied context** —
+Obol doesn't and shouldn't try to derive these from balances alone:
+- Retirement savings rate: needs annual income and annual retirement
+  contributions as inputs, since Plaid's Balance product (§7, D22) doesn't
+  expose "how much did I contribute this year." Editable default bands:
+  <10% red, 10–20% yellow, ≥20% green.
+- Target monthly spend: this one is explicitly a *moving target*, not a fixed
+  threshold — a glidepath (start value, step size, floor, and an optional
+  ceiling event) rather than a static band.
+- 529 education percent-funded: needs the same kind of forward-looking
+  calculation your advisor's software already does (current 529 balance,
+  projected growth, and total cost) — Obol tracks the percentage as a
+  manually-updated number from each plan revision rather than attempting to
+  replicate a full education-funding projection itself.
+
+**C. Externally-computed metrics, manually re-entered periodically** — Obol
+has no way to calculate these itself; it can only store and display the last
+known value plus how stale it is:
+- Retirement plan probability of success (from your advisor's Monte Carlo
+  tool). Editable default bands: <70% red, 70–85% yellow, >85% green
+  (standard industry convention, not specific to your plan).
+- Any other advisor-computed projection you want tracked over time.
+
+**D. Checklist items** — complete or incomplete, no threshold at all,
+displayed the same way the Plaid Item usage counter shows "X/10":
+- Estate documents (Will, Revocable Living Trust, Medical POA, Financial POA,
+  Living Will, HIPAA release) — "4/6 complete," etc.
+- Own-occupation disability insurance in place
+- Term life insurance in place (activation-conditioned — see below)
+- Retirement account rollovers completed
+- Roth vs. pre-tax 401(k) election
+- FSA enrollment
+- ESPP participation / immediate-sale discipline
+
+**Activation conditions:** some checklist items only become relevant given
+another event (e.g. a life insurance need conditioned on a home purchase
+closing). Rather than showing an irrelevant item as "incomplete"
+indefinitely, each checklist item can optionally declare a simple
+precondition (e.g. "only show once `home_purchased` is true") — a small
+boolean flag you set yourself, not something Obol infers.
+
+**A forward-looking connection, not a v1 scope expansion:** the `Holding`
+type and `holdings()` mechanism added for the concentration-risk breakdown
+(FR22, D31) already extracts per-position data for holdings-bearing
+accounts. A future "concentration risk" recommendation (e.g. "no single
+stock exceeds N% of investable assets") could reuse that same `Vec<Holding>`
+rather than needing new extraction — noted here for later, not built now.
+
+### 13.2 Architecture
+
+A `Recommendation` is the metric-tracking analogue of a `Provider`/`Account`
+pairing (§10, §11) — the same instinct of keeping the "what" (the metric
+definition) separate from "how its value is obtained":
+
+```rust
+enum ValueSource {
+    Snapshot,                                        // type A
+    UserConfig,                                       // type B
+    ManualExternal { last_updated: DateTime<Utc> },    // type C
+    Checklist,                                         // type D
+}
+
+struct Recommendation {
+    id: String,
+    description: String,
+    value_source: ValueSource,
+    thresholds: Option<ThresholdBands>, // None for checklist items
+    precondition: Option<String>,       // e.g. "home_purchased"
+}
+```
+
+Recommendation definitions and their editable thresholds live in a
+`recommendations.yaml`, managed through the UI exactly like `sources.yaml`
+(§10.1) — no hand-editing required, and the same atomic-write / `0600`
+treatment (§4, §11.1) applies, since threshold values and manually-entered
+figures (income, insurance amounts) are meaningfully sensitive even though
+they're not credentials. Writes to `recommendations.yaml` are covered by the
+same advisory file lock as `sources.yaml` and snapshot writes (§9.1, D13) —
+one more write-critical section under the existing lock, not a new
+concurrency mechanism.
+
+**Display:** a dedicated screen (§14) shows every recommendation's current
+status using the same colorblind-safe, never-color-alone convention as the
+rest of the dashboard (icon + label, not color alone) — status bands render
+as a short label ("Red — 4.2 months," "6/6 complete," "Stale — last updated
+11 months ago" for type C metrics whose freshness matters as much as their
+value).
+
+**Editability (FR26):** every threshold band and every manually-entered
+value is editable through the same UI, since a financial plan is reviewed
+annually and any given revision's specific numbers ($70k–$105k, 10–20%,
+etc.) are illustrative starting defaults, not permanent constants.
+
+### 13.3 Rollout order
+
+Given the range of automatability across these types, recommendation
+tracking rolls out in the order each type actually gets easier to build, not
+all at once:
+
+1. **Type A (pure snapshot-derived)** first — emergency fund coverage needs
+   no new input at all, since Obol already has categorized cash/money-market
+   balances from v0.1 onward.
+2. **Type D (checklists)** next — trivial to build (a boolean + optional
+   precondition), high value, and directly reuses the "X/N complete"
+   pattern already built for Plaid Item usage (§7.1).
+3. **Type B (user-config threshold metrics)** — needs a small new config
+   surface for income, contributions, and the spend glidepath, but no new
+   architectural concept beyond what §13.2 already defines.
+4. **Type C (externally-computed, manually re-entered)** last — lowest
+   automation value since Obol is just storing a number you type in after
+   each advisor meeting, but still worth having in one place rather than
+   back in the PDF.
+
+## 14. Dashboard UI
+
+Three screens: the **net worth dashboard** (default view), a **Sources**
+screen for managing connections (§10.1), and a **Recommendations** screen
+for financial health tracking (§13).
 
 **Dashboard:**
 - One panel per source, each independently rendered — a failed source shows a
@@ -1017,7 +1178,7 @@ screen for managing connections (§10.1).
   worth and per-category balances over time once that data exists.
 - **No in-TUI refresh in v0.1** — getting new data means quitting and
   rerunning `obol` (§6.2), which fetches, saves, and renders in one shot.
-  An in-TUI refresh keybinding is deferred to v0.4 (§15).
+  An in-TUI refresh keybinding is deferred to v0.4 (§16).
 
 **Sources screen:**
 - List of configured sources with provider, category, type, and connection
@@ -1028,22 +1189,37 @@ screen for managing connections (§10.1).
 - Add / Edit / Remove actions per §10.1, including the Plaid Hosted Link
   flow and the confirmed-cleanup remove flow.
 
-## 14. Tech stack (Rust — security-first, decision D6)
+**Recommendations screen (§13):**
+- Every configured recommendation, one row per item, status shown with the
+  same colorblind-safe icon + label convention as the main dashboard — never
+  color alone.
+- Threshold metrics (types A–C, §13.1) show their current value and band
+  ("Red — 4.2 months of expenses"); checklist items (type D) show
+  completion count ("4/6 estate documents complete").
+- Type C metrics additionally show staleness ("last updated 11 months ago")
+  since, unlike A/B/D, their value can't be freshened by simply running a
+  snapshot.
+- Add / Edit / Remove / adjust-thresholds actions, mirroring the Sources
+  screen's UI pattern (§10.1) — generated forms per recommendation type
+  rather than hand-edited YAML, consistent with FR26's editability
+  requirement.
+
+## 15. Tech stack (Rust — security-first, decision D6)
 
 | Layer | Choice | Why |
 |---|---|---|
 | Core (shared) | Plain Rust + `serde`/`serde_json` | No UI dependency in the core library — both interfaces call the same functions; `serde` handles schema + versioned migrations |
 | Async runtime | `tokio` | Already your working environment from recent projects |
-| Plaid integration | Hand-rolled `reqwest` + `serde` client against Plaid's documented REST endpoints — Balance and Link only (D22, §16); Investments/Liabilities were built, Sandbox-tested, and deliberately dropped once Balance was confirmed sufficient | No official Rust SDK exists (community crates like `rplaid` and OpenAPI-generated clients exist but are unaudited third-party surfaces); a narrow, self-written client covering only the endpoints actually needed keeps the audited surface small — consistent with §4's minimal-dependency principle |
+| Plaid integration | Hand-rolled `reqwest` + `serde` client against Plaid's documented REST endpoints — Balance and Link only (D22, §17); Investments/Liabilities were built, Sandbox-tested, and deliberately dropped once Balance was confirmed sufficient | No official Rust SDK exists (community crates like `rplaid` and OpenAPI-generated clients exist but are unaudited third-party surfaces); a narrow, self-written client covering only the endpoints actually needed keeps the audited surface small — consistent with §4's minimal-dependency principle |
 | Browser automation | `fantoccini` (WebDriver protocol, via chromedriver/geckodriver) | No Rust Playwright bindings exist. **Needs a spike**: WebDriver automation has historically struggled more than Playwright's CDP approach against heavy anti-bot/JS bank login flows — validate against a real target before committing (§7) |
 | TLS | `rustls` (via `reqwest`'s `rustls-tls` feature) | Memory-safe TLS stack, avoids linking OpenSSL and its associated CVE history |
 | Secrets | `secrecy` + `zeroize` | `secrecy` prevents accidental exposure via `Debug`/logging; `zeroize` gives deterministic, compiler-enforced wiping on drop (§4) |
 | Keychain | `security-framework` crate | Rust bindings to macOS Security.framework; same `kSecAttrAccessibleWhenUnlockedThisDeviceOnly` ACL as before. Storing (not reading/deleting) an item with this ACL is currently broken and parked, not resolved — see D24 |
-| Retry logic | `tokio-retry` (`RetryIf` + `ExponentialBackoff`) | Same policy as §9 (3 attempts, exponential backoff, jitter); `RetryIf`'s condition closure is what lets auth failures fail fast instead of retrying (D10, §16) — simpler than hand-rolling the same branch |
+| Retry logic | `tokio-retry` (`RetryIf` + `ExponentialBackoff`) | Same policy as §9 (3 attempts, exponential backoff, jitter); `RetryIf`'s condition closure is what lets auth failures fail fast instead of retrying (D10, §17) — simpler than hand-rolling the same branch |
 | **CLI/TUI (phase 1)** | `clap` + `ratatui` | `clap` for scriptable commands (`dashboard snapshot`), `ratatui` for the interactive terminal dashboard/sources screens — mature, well-regarded Rust TUI framework |
-| **GUI (phase 2)** | Local HTTP(S) endpoint (`127.0.0.1:<port>`), reachable via browser | Simpler packaging than a native GUI toolkit — no bundled UI framework. **Trade-off to design properly once we get here (decision D7, §16):** unlike a native app, a listening port has real local attack surface (other local processes, DNS-rebinding from a malicious page in another tab) that needs mitigating — session token, strict `Host` header checks, no CDN-loaded assets. Deferred until after v0.1/v0.2 are done, not designed yet |
+| **GUI (phase 2)** | Local HTTP(S) endpoint (`127.0.0.1:<port>`), reachable via browser | Simpler packaging than a native GUI toolkit — no bundled UI framework. **Trade-off to design properly once we get here (decision D7, §17):** unlike a native app, a listening port has real local attack surface (other local processes, DNS-rebinding from a malicious page in another tab) that needs mitigating — session token, strict `Host` header checks, no CDN-loaded assets. Deferred until after v0.1/v0.2 are done, not designed yet |
 | Charts | `plotters` | Renders to both the TUI (via `ratatui` widgets) and the GUI canvas; colorblind-safe palette applied manually since it's a lower-level library than Plotly |
-| Packaging | `cargo build --release` (native binary) | No interpreter or bundler runtime to ship. **Gatekeeper/notarization is not needed for v0.1/v0.2**: a binary you build locally and run from Terminal never gets the `com.apple.quarantine` attribute that triggers Gatekeeper — that only applies to files downloaded via a browser, Mail, or AirDrop. This only becomes a real question if the tool is ever distributed as a `.app` for someone else, or downloaded rather than built. **Separately, storing a Keychain item with the required `ThisDeviceOnly` ACL currently doesn't work at all, signed or not** (decision D24, §16) — parked, not resolved; the release binary can't actually persist a Plaid access token until this is fixed |
+| Packaging | `cargo build --release` (native binary) | No interpreter or bundler runtime to ship. **Gatekeeper/notarization is not needed for v0.1/v0.2**: a binary you build locally and run from Terminal never gets the `com.apple.quarantine` attribute that triggers Gatekeeper — that only applies to files downloaded via a browser, Mail, or AirDrop. This only becomes a real question if the tool is ever distributed as a `.app` for someone else, or downloaded rather than built. **Separately, storing a Keychain item with the required `ThisDeviceOnly` ACL currently doesn't work at all, signed or not** (decision D24, §17) — parked, not resolved; the release binary can't actually persist a Plaid access token until this is fixed |
 | Dependency management | `Cargo.lock` (committed) | Rust's default toolchain is already lockfile-first, directly reinforcing the supply-chain principle in §4 |
 | Logging | `tracing` + `tracing-subscriber` | Backs the audit log requirement (§4) — structured, filterable, and the natural place to enforce "never log a credential or full account number" as a consistent policy rather than an ad-hoc discipline |
 | Error handling | `thiserror` in the core library (typed `ProviderError`, `SnapshotError`, etc. — see the `Provider` trait in §10); `anyhow` in the CLI/TUI binary for top-level error reporting | Conventional Rust split: typed, matchable errors in the library; ergonomic error context at the application boundary |
@@ -1055,7 +1231,7 @@ memory-scrubbing gap (§4). The genuine new ground is the Plaid REST client
 and the `fantoccini`-based browser automation — both scoped narrowly and
 flagged for early spikes rather than assumed to just work.
 
-## 15. Phased plan
+## 16. Phased plan
 
 Within every phase below, core-library work follows the test-first
 discipline in §5 — write the failing test, then the implementation.
@@ -1076,7 +1252,7 @@ is verified separately, not forced into that same red-green loop (§5).
   against one real (non-critical) bank-style login flow, before committing
   to WebDriver automation as the browser-automation approach for v0.2 — if
   it can't reliably clear modern anti-bot/JS flows, this is the point to
-  reconsider (§14).
+  reconsider (§15).
 - **v0.2 (production data + browser fallback):** real Plaid Production
   linking (still through the TUI's Hosted Link flow) for
   Chase/Vanguard/Fidelity/E-Trade; `fantoccini`-based fallback connector for
@@ -1089,16 +1265,31 @@ is verified separately, not forced into that same red-green loop (§5).
   interface. The CLI/TUI is not retired; it remains the interface for
   scheduled/headless runs (see §6.1) and continues to share 100% of the core
   with the HTTP interface. **Security design for the HTTP layer (auth token,
-  Host-header validation, asset vendoring — see D7, §16) is scoped in detail
+  Host-header validation, asset vendoring — see D7, §17) is scoped in detail
   when this phase actually starts, not before** — no point designing it
   against a moving target while v0.1/v0.2 are still in flight.
 - **v0.4 (stretch):** asset-type pie chart, spending/savings trend lines,
   student loan + mortgage connectors once servicers are chosen, scheduled
   biweekly runs (`launchd` job calling the CLI, no GUI required), an
   in-TUI manual refresh command (re-fetch without quitting and rerunning
-  `obol`, §13), and a configurable storage location (§4, D17).
+  `obol`, §14), and a configurable storage location (§4, D17).
+- **v0.5 (recommendation tracking, §13):** rolled out in the order given in
+  §13.3, each step a self-contained, shippable increment rather than one
+  large feature drop:
+  - **v0.5a** — Type A (snapshot-derived) metrics: emergency fund coverage,
+    using cash/money-market balances already available since v0.1.
+  - **v0.5b** — Type D (checklists): estate documents, insurance in place,
+    and the other one-time action items, reusing the "X/N complete" pattern
+    from the Item usage counter (§7.1).
+  - **v0.5c** — Type B (user-config threshold metrics): savings rate and
+    the spending glidepath, adding the small config surface for income and
+    contributions that these require.
+  - **v0.5d** — Type C (externally-computed, manually re-entered): retirement
+    plan probability of success and similar advisor-computed figures, plus
+    the staleness indicator for values that aren't refreshed by a snapshot
+    run.
 
-## 16. Decisions log
+## 17. Decisions log
 
 Previously open questions, now resolved:
 
@@ -1119,7 +1310,7 @@ Previously open questions, now resolved:
   Manual entry stands for v1 regardless (no reason to add browser-automation
   complexity for one account that already works via a simple form), but
   this makes Apple Card a legitimate future target for the fantoccini spike
-  (§15) if browser automation for it is ever revisited — unlike student
+  (§16) if browser automation for it is ever revisited — unlike student
   loans/mortgage, which have no chosen servicer yet to even target.
 - **D4 — Provider swappability:** the connector layer is split into
   `Source` (config) and `Provider` (implementation) so that moving off
@@ -1127,7 +1318,7 @@ Previously open questions, now resolved:
   and a config change, never a change to the snapshot engine, storage, PII
   scrubbing, or dashboard (§10).
 - **D5 — Interface sequencing:** build CLI/TUI first, second interface
-  second (§6.1, §15), both sitting on one core library. Rationale: the
+  second (§6.1, §16), both sitting on one core library. Rationale: the
   CLI/TUI validates the whole pipeline cheaply before investing in a second
   interface, and because you're not coming from a Python/Rust-web
   background by default, an interface reachable in a normal browser is the
@@ -1179,7 +1370,7 @@ Previously open questions, now resolved:
   forced into the same test-first loop, since live external systems aren't
   a good fit for red-green TDD.
 - **D10 — Retry logic uses the `tokio-retry` crate**, specifically `RetryIf`
-  (§9, §14), instead of hand-rolling `tokio::time::sleep` + jitter or
+  (§9, §15), instead of hand-rolling `tokio::time::sleep` + jitter or
   pulling in `backoff`. `RetryIf`'s condition closure is what gives fail-fast
   auth-failure behavior for free — the alternative was writing that branch
   by hand — while still satisfying the minimal-dependency principle (§4):
@@ -1211,7 +1402,7 @@ Previously open questions, now resolved:
   (which stays per-source, per §9's isolation principle), WebDriver
   infrastructure errors kept distinct from login failures and not
   retried, and concurrent runs serialized via an OS-level advisory file
-  lock (`fs2`/`fslock`, §14) rather than left to race on shared state.
+  lock (`fs2`/`fslock`, §15) rather than left to race on shared state.
 - **D14 — Forward compatibility for the snapshot schema** (§11.3):
   alongside the existing backward-compatibility migration chain, the
   loader also tolerates snapshots written by a *newer* binary — unknown
@@ -1225,24 +1416,24 @@ Previously open questions, now resolved:
   let leaked snapshots from different installs be correlated). Rides on
   the same `0600` protection the file already has — a pragmatic choice for
   now, not necessarily permanent.
-- **D16 — Balances stay `f64`** (§11, §12, §14): `rust_decimal`/cents-based
+- **D16 — Balances stay `f64`** (§11, §12, §15): `rust_decimal`/cents-based
   integers were considered and rejected for v1 — this is a dashboard for a
   glance-at-it figure, not an accounting tool, so sub-cent float drift is
   an accepted tradeoff.
 - **D17 — Storage path is fixed, not configurable, in v1** (§4): an
   override mechanism reopens the cloud-sync-folder validation question §4
   exists to close, so it's deferred rather than designed now. Named as a
-  v0.4 stretch item (§15) rather than left as an unscoped "someday."
+  v0.4 stretch item (§16) rather than left as an unscoped "someday."
 - **D18 — Plaid Link polling is a non-blocking background task, not a
   blocking loop** (§10.1): the 6-hour result-retrieval window is Plaid's
   own guarantee, not an expected completion time — the Hosted Link/QR-code
   flow means a user could genuinely take a while, so the TUI can't freeze
   while waiting. The pending session is cancelable from the Sources
   screen.
-- **D19 — No in-TUI manual refresh in v0.1** (§13): getting new data means
+- **D19 — No in-TUI manual refresh in v0.1** (§14): getting new data means
   quitting and rerunning `obol`, which is an acceptable workflow for a
   single-user, on-demand v0.1 tool and avoids overlapping a fresh fetch
-  with a screen that's mid-render. Named as a v0.4 stretch item (§15)
+  with a screen that's mid-render. Named as a v0.4 stretch item (§16)
   rather than left unscoped.
 - **D20 — This app's own Plaid `client_id`/`secret` live in Keychain**
   (§4), the same treatment as the per-Item access token (§8) — not an
@@ -1275,7 +1466,7 @@ Previously open questions, now resolved:
   The Item counter (§7.1) still increments once per Item regardless of
   how many accounts/sources come from it — it tracks logins, not
   accounts.
-- **D22 — Plaid integration uses the Balance product only** (§7, §14):
+- **D22 — Plaid integration uses the Balance product only** (§7, §15):
   built and Sandbox-tested Investments Holdings and Liabilities clients
   first (per the original plan), then tested whether the plain Balance
   endpoint alone returns usable current-balance data for investment- and
@@ -1290,7 +1481,7 @@ Previously open questions, now resolved:
   a response to a billing surprise, just a straightforward reduction in
   product surface and future cost exposure.
 - **D24 — Storing a Plaid access token in Keychain is currently broken,
-  and parked rather than fixed** (§4, §8, §14): discovered while
+  and parked rather than fixed** (§4, §8, §15): discovered while
   finishing task 19 — an unsigned `cargo build`/`cargo test` binary hits
   `errSecMissingEntitlement` (-34018) the moment it calls `SecItemAdd`
   with the `SecAccessControl` needed for
@@ -1353,7 +1544,7 @@ Previously open questions, now resolved:
   the spike" — the verification happened, and the results were worse
   than assumed for Vanguard specifically: not a nuance to work around,
   a flat lack of support. Resolved: Vanguard moves to browser
-  automation (reactivating the fantoccini spike, §15 task 21, which now
+  automation (reactivating the fantoccini spike, §16 task 21, which now
   has a concrete real target rather than being parked for lack of one);
   Fidelity stays on Plaid pending Compliance Center approval requested
   through Plaid's dashboard, with browser automation as the fallback if
@@ -1364,7 +1555,7 @@ Previously open questions, now resolved:
   without testing either.
 - **D26 — `create_link_token`'s `products` must include `"liabilities"`
   for credit card accounts to be included in the Item at all** (§7,
-  §14): discovered while linking a real Chase credit card (task 25) —
+  §15): discovered while linking a real Chase credit card (task 25) —
   `products: ["auth"]` alone let the card show as *selectable* in
   Plaid's Hosted Link UI, but the resulting Item silently excluded it;
   two separate real Link sessions both produced an Item scoped to
@@ -1382,7 +1573,7 @@ Previously open questions, now resolved:
   requesting it at Link time doesn't reopen the cost question D22
   settled.
 - **D27 — WebDriver automation hands off login to the human, then takes
-  over the authenticated session** (§7, §8, §14, §15): decided while
+  over the authenticated session** (§7, §8, §15, §16): decided while
   running the fantoccini spike (task 21) against Vanguard's real login
   page. Scripting the login itself hit real, expected friction —
   Vanguard's Angular-based form didn't register a WebDriver-simulated
@@ -1563,7 +1754,7 @@ Previously open questions, now resolved:
   is no longer needed for any institution in this app's current scope —
   parked indefinitely rather than built, since nothing left requires it.
 - **D31 — Holdings breakdown for Vanguard Brokerage, terminal-native bar
-  chart, no schema-version bump** (FR22, §13, Phase M): every account
+  chart, no schema-version bump** (FR22, §14, Phase M): every account
   today reports exactly one balance — accurate for net worth, but it
   hides composition. Scoped to Vanguard Brokerage only (the one account
   type that actually lists individual positions today); rendered as
@@ -1678,3 +1869,26 @@ Previously open questions, now resolved:
   rejected as `AmbiguousMatch` even though every occurrence names the
   same one account. `extract_account_sections` now dedupes by last4,
   keeping the first occurrence whose balance can be found.
+- **D35 — Recommendation tracking added as a new feature area** (FR23–FR28,
+  §13), generalizing the specific recommendations from a June 2026 advisor
+  plan (emergency fund, savings rate, retirement probability of success,
+  estate documents, insurance) into a `Recommendation` abstraction with four
+  distinct value sources (snapshot-derived, user-config, manually-tracked
+  external, checklist) rather than one threshold model forced onto
+  everything. Deliberately kept separate from the `Account`/`Provider`
+  machinery (§10, §11) — a `Recommendation` reads from a completed
+  snapshot's `Account` data (type A) or from its own config (types B–D), it
+  is never itself an `Account` or fetched by a `Provider`. Two explicit
+  decisions within this: **(a)** all thresholds and manually-entered
+  figures are user-editable, never hard-coded, since financial plans are
+  reviewed annually and any given plan revision's specific numbers are
+  illustrative defaults, not constants; **(b)** rollout is phased by
+  automatability (v0.5a–d, §16) rather than delivered as one large feature,
+  starting with what's already computable from existing snapshot data
+  (leaning on the same categorized `Account` types §7's real institution
+  work already established) and ending with the hardest-to-automate,
+  manually-tracked external metrics. Not yet verified against a second real
+  advisor-plan revision — the editability requirement (a) exists precisely
+  so that a future revision's different numbers don't require a code
+  change, but that assumption itself is untested until one actually shows
+  up.
