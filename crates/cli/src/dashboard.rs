@@ -19,13 +19,17 @@ use ratatui::widgets::{Block, Borders, List, ListItem, Paragraph};
 use ratatui::Frame;
 use ratatui::Terminal;
 
-use obol_core::{AccountRecord, AssetClass, Category, Holding, NetWorth, Snapshot, Status};
+use obol_core::{
+    AccountRecord, AssetClass, Category, EmergencyFundStatus, EmergencyFundThresholds, Holding,
+    NetWorth, Snapshot, Status, ThresholdBand,
+};
 
 // Okabe–Ito palette (§13) — chosen over red/green specifically so
 // status reads correctly under every common form of color vision.
 const BLUE: Color = Color::Rgb(0, 114, 178);
 const BLUISH_GREEN: Color = Color::Rgb(0, 158, 115);
 const VERMILLION: Color = Color::Rgb(213, 94, 0);
+const ORANGE: Color = Color::Rgb(230, 159, 0);
 
 /// What the user asked for on their way out of the Dashboard screen.
 pub enum DashboardAction {
@@ -49,12 +53,21 @@ pub enum DashboardAction {
 /// used only to show "+$X since <date>" under the net worth figure.
 /// `None` on a first-ever run, or if the previous snapshot's net worth
 /// wasn't computable either (nothing meaningful to diff against).
-pub fn run(snapshot: &Snapshot, previous: Option<&Snapshot>) -> io::Result<DashboardAction> {
+///
+/// `emergency_fund_thresholds` (spec §13.1 Type A, D36) — loaded and,
+/// if needed, interactively prompted for by the caller *before* this
+/// function is entered, since that prompt needs plain cooked-terminal
+/// stdin, not the raw/alternate-screen mode this function sets up.
+pub fn run(
+    snapshot: &Snapshot,
+    previous: Option<&Snapshot>,
+    emergency_fund_thresholds: &EmergencyFundThresholds,
+) -> io::Result<DashboardAction> {
     enable_raw_mode()?;
     io::stdout().execute(EnterAlternateScreen)?;
     let mut terminal = Terminal::new(CrosstermBackend::new(io::stdout()))?;
 
-    terminal.draw(|frame| draw(frame, snapshot, previous))?;
+    terminal.draw(|frame| draw(frame, snapshot, previous, emergency_fund_thresholds))?;
     let action = loop {
         let Event::Key(key) = event::read()? else {
             continue;
@@ -73,7 +86,12 @@ pub fn run(snapshot: &Snapshot, previous: Option<&Snapshot>) -> io::Result<Dashb
     Ok(action)
 }
 
-fn draw(frame: &mut Frame, snapshot: &Snapshot, previous: Option<&Snapshot>) {
+fn draw(
+    frame: &mut Frame,
+    snapshot: &Snapshot,
+    previous: Option<&Snapshot>,
+    emergency_fund_thresholds: &EmergencyFundThresholds,
+) {
     // Spec D31: pooled across every holdings-bearing account in this
     // snapshot (today, at most one — Vanguard Brokerage), not just the
     // first one found. Absent entirely (not an empty panel) whenever no
@@ -87,9 +105,18 @@ fn draw(frame: &mut Frame, snapshot: &Snapshot, previous: Option<&Snapshot>) {
         .collect();
     let buckets = obol_core::bucket(&all_holdings);
 
+    let emergency_fund_status =
+        obol_core::calculate_emergency_fund_status(&snapshot.accounts, emergency_fund_thresholds);
+
     let mut constraints = vec![
         Constraint::Length(3), // title
         Constraint::Length(4), // net worth + change-since-last-run
+        // Spec §13.1 Type A, D36: always rendered, unlike the
+        // conditional holdings-breakdown panel below — an unconfigured/
+        // no-data state is itself meaningful status worth always
+        // surfacing (same "not buried in a details view" instinct as
+        // the Plaid Item usage counter, §7.1), not just hidden.
+        Constraint::Length(3), // emergency fund coverage
     ];
     if !buckets.is_empty() {
         // +2 for the panel's own border/title lines, one line per bucket.
@@ -106,8 +133,9 @@ fn draw(frame: &mut Frame, snapshot: &Snapshot, previous: Option<&Snapshot>) {
 
     draw_title(frame, areas[0]);
     draw_net_worth(frame, areas[1], snapshot, previous);
+    draw_emergency_fund_coverage(frame, areas[2], &emergency_fund_status);
 
-    let mut next = 2;
+    let mut next = 3;
     if !buckets.is_empty() {
         draw_holdings_breakdown(frame, areas[next], &buckets);
         next += 1;
@@ -201,6 +229,58 @@ fn change_since_previous(current: NetWorth, previous: Option<&Snapshot>) -> Opti
         format!("{sign}${:.2} since {date}", delta.abs()),
         Style::default().fg(color),
     )))
+}
+
+/// Emergency fund coverage (spec §13.1 Type A, D36) — one line, always
+/// rendered (see `draw`'s comment on why this differs from the
+/// conditional holdings-breakdown panel below). Band color + text label
+/// together, never color alone (FR27).
+fn draw_emergency_fund_coverage(frame: &mut Frame, area: Rect, status: &EmergencyFundStatus) {
+    let line = match status {
+        EmergencyFundStatus::Computed {
+            months_of_coverage,
+            band,
+            ..
+        } => Line::from(vec![
+            Span::raw("Emergency fund: "),
+            Span::styled(
+                format!("{months_of_coverage:.1} months of expenses covered"),
+                Style::default()
+                    .fg(threshold_band_color(*band))
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::raw("  "),
+            Span::styled(
+                band.label(),
+                Style::default()
+                    .fg(threshold_band_color(*band))
+                    .add_modifier(Modifier::BOLD),
+            ),
+        ]),
+        EmergencyFundStatus::NoCashAccountData => Line::from(Span::raw(
+            "Emergency fund: no checking/money-market data this run",
+        )),
+        // Mostly a fallback for "the first-run prompt was skipped" —
+        // main.rs prompts for this interactively before the dashboard
+        // is ever entered, so this state is reachable but not the
+        // common path.
+        EmergencyFundStatus::TargetNotConfigured => Line::from(Span::raw(
+            "Emergency fund: target monthly expenses not set — rerun to be prompted, or edit rules.yaml",
+        )),
+    };
+
+    frame.render_widget(
+        Paragraph::new(line).block(Block::default().borders(Borders::ALL)),
+        area,
+    );
+}
+
+fn threshold_band_color(band: ThresholdBand) -> Color {
+    match band {
+        ThresholdBand::Red => VERMILLION,
+        ThresholdBand::Yellow => ORANGE,
+        ThresholdBand::Green => BLUISH_GREEN,
+    }
 }
 
 /// One horizontal bar per asset class (cash/ETF/individual stock, spec

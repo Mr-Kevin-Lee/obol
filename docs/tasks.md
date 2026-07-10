@@ -448,3 +448,77 @@ statement's actual structure.
 59. `docs/spec.md` D33 + D34 decision records, this Phase O entry.
 60. Verify build/tests, commit, manual end-to-end walkthrough against
     the real Chase Checking statement via `~/Statements/Chase/Checking`.
+
+## Phase P — Emergency fund coverage (D36)
+
+Decided post-v0.1 (D35, FR23–FR28, §13): recommendation tracking's
+rollout is explicitly phased by automatability, not built all at once.
+This phase is v0.5a — Type A only (§13.1), the one metric computable
+purely from data obol already fetches: emergency fund coverage (cash +
+money-market balances ÷ a user-supplied target monthly-expense figure,
+red/yellow/green bands). Types B/C/D are separate future phases. Scoped
+deliberately narrow per D36: a concrete threshold/status pair rather
+than §13.2's general `Recommendation`/`ValueSource` enum, and a new
+Dashboard panel rather than §14's dedicated Recommendations screen —
+both are the general-case machinery for once there's an actual
+heterogeneous, growing list of recommendations to manage (v0.5b
+onward), not needed for one always-present metric yet.
+
+61. `crates/core/src/emergency_fund.rs` — `EmergencyFundThresholds`
+    (target monthly expenses, red/green band cutoffs) + `ThresholdBand`
+    + `band_for()` (test-first). Tests: default bands (target
+    unconfigured via a `<= 0.0` sentinel, red 6.0/green 9.0 per §13.1's
+    illustrative starting point), boundary behavior at exactly 6 and 9
+    months.
+62. Same module — `EmergencyFundStatus` (`Computed`/`NoCashAccountData`/
+    `TargetNotConfigured`) + `calculate_emergency_fund_status()`, a pure
+    function over `&[AccountRecord]` mirroring `holdings.rs`'s shape
+    (D31) and `networth.rs`'s "never a bare misleading number" instinct
+    (a real `$0` across real qualifying accounts is `Computed`, never
+    conflated with "no data"). Tests: sums only `checking`/
+    `money_market` accounts with `Status::Ok`; an errored qualifying
+    account is excluded; no qualifying accounts → `NoCashAccountData`;
+    zero total cash with a configured target → `Computed` at zero
+    months, Red; an unconfigured target → `TargetNotConfigured` even
+    with cash present (checked before the cash-data check); months-
+    coverage arithmetic; checking + money-market balances combine into
+    one total; threshold serde round-trip.
+63. `crates/core/src/emergency_fund_storage.rs` — a private `RulesFile {
+    emergency_fund: EmergencyFundThresholds }` wrapper (same unwrapping
+    precedent as `sources.rs`'s private `SourcesFile`) persisted to a
+    generically-named/-shaped `rules.yaml`, so a future rule type can
+    add its own section later without restructuring the file (D36).
+    `load_or_init_emergency_fund_thresholds`/
+    `save_emergency_fund_thresholds` mirror `sources.rs`'s atomic-write
+    pattern (temp file + rename, `0600`) exactly, deliberately not
+    sharing its `write_atomically` helper (established precedent: each
+    storage module owns its own near-identical block). Saving is a
+    read-modify-write, not a blind overwrite, so a future second
+    `RulesFile` field isn't reset to default on every save — but an
+    *unrecognized* top-level key in a hand-edited file still isn't
+    preserved, since `RulesFile` has no catch-all field (explicitly not
+    solved speculatively, per D36). Tests: first-run creates a default
+    file; `0600` permissions; save-then-load round-trip; saving over an
+    existing file updates its `emergency_fund` section correctly;
+    malformed file produces a clear parse error.
+64. `lib.rs` re-exports for both new modules.
+65. `crates/cli/src/main.rs` wiring — new `rules.yaml` path,
+    `load_emergency_fund_thresholds_interactive()` (fails soft on a
+    malformed file, unlike `sources.yaml`'s fail-hard treatment — a
+    broken rules file degrades one panel, not the whole run) plus
+    `prompt_for_target_monthly_expenses()`, a plain stdin/stdout prompt
+    run *before* `dashboard::run()` enters raw/alternate-screen mode.
+    Wired only into the interactive `Screen::Dashboard` arm, reloaded
+    fresh every entry; threaded into `dashboard::run`'s new parameter.
+66. `crates/cli/src/dashboard.rs` — `draw_emergency_fund_coverage()`,
+    new `ORANGE` Okabe–Ito constant completing the three-band
+    colorblind-safe palette. **Always rendered**, unlike the conditional
+    holdings-breakdown panel — an unconfigured/no-data state is itself
+    meaningful status worth always surfacing (§7.1's Item-usage-counter
+    precedent), not hidden. Band color + text label together, never
+    color alone (FR27). Manual TUI verification only (§5/D9 carve-out).
+67. `docs/spec.md` D36 decision record + this Phase P entry; verify
+    build/tests, commit, manual end-to-end walkthrough (first-run
+    prompt appears and persists; skip path shows the
+    `TargetNotConfigured` fallback; a corrupted `rules.yaml` falls back
+    to defaults with a warning rather than crashing).

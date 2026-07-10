@@ -3,6 +3,7 @@ mod form;
 mod mode;
 mod sources_screen;
 
+use std::io::Write;
 use std::path::PathBuf;
 
 use clap::{Parser, Subcommand};
@@ -114,6 +115,60 @@ fn statements_root() -> PathBuf {
     PathBuf::from(home).join("Statements")
 }
 
+/// Loads emergency-fund thresholds (spec §13.1 Type A, D36) from
+/// `rules.yaml`, prompting once for the target monthly-expense figure
+/// if it's still unset — the one value with no sensible default (the
+/// red/yellow/green band thresholds already have spec-given defaults).
+/// Fails soft on a malformed `rules.yaml` (falls back to defaults + a
+/// warning) rather than exiting the process, unlike `sources.yaml`'s
+/// fail-hard treatment (§9.1) — a broken rules file degrades one
+/// dashboard panel, not the whole run. **Only ever called from the
+/// interactive Dashboard screen**, never from a future headless `obol
+/// snapshot` path, since that can't block on stdin.
+fn load_emergency_fund_thresholds_interactive(
+    path: &std::path::Path,
+) -> obol_core::EmergencyFundThresholds {
+    let mut thresholds =
+        obol_core::load_or_init_emergency_fund_thresholds(path).unwrap_or_else(|err| {
+            eprintln!("warning: rules.yaml could not be read ({err}) — using defaults");
+            obol_core::EmergencyFundThresholds::default()
+        });
+
+    if thresholds.target_monthly_expenses <= 0.0 {
+        if let Some(value) = prompt_for_target_monthly_expenses() {
+            thresholds.target_monthly_expenses = value;
+            if let Err(err) = obol_core::save_emergency_fund_thresholds(path, &thresholds) {
+                eprintln!("warning: could not save target monthly expenses: {err}");
+            }
+        }
+    }
+
+    thresholds
+}
+
+/// Plain stdin/stdout prompt — must run *before* `dashboard::run()`
+/// enters raw/alternate-screen mode, so this stays here rather than
+/// inside `ratatui` rendering code. One attempt: blank input skips
+/// (asked again next run), an invalid entry also skips rather than
+/// looping — a light first-run nicety, not a validation gauntlet.
+fn prompt_for_target_monthly_expenses() -> Option<f64> {
+    print!("Emergency fund tracking: enter your target monthly expenses ($, blank to skip): ");
+    std::io::stdout().flush().ok()?;
+    let mut input = String::new();
+    std::io::stdin().read_line(&mut input).ok()?;
+    let trimmed = input.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    match trimmed.parse::<f64>() {
+        Ok(value) if value > 0.0 => Some(value),
+        _ => {
+            eprintln!("Not a valid positive number — skipping for now.");
+            None
+        }
+    }
+}
+
 /// Wires `core::engine`'s audit events (§4, task 26) to a local file —
 /// core only ever emits `tracing` events, never decides where they go
 /// (§6.1: no UI/presentation concerns in core); this is that decision,
@@ -157,6 +212,7 @@ async fn main() {
     let item_usage_path = storage_dir.join("item_usage.json");
     let processed_statements_path = storage_dir.join("processed_statements.json");
     let snapshots_dir = storage_dir.join("snapshots");
+    let rules_path = storage_dir.join("rules.yaml");
     let mut sources = match obol_core::load_or_init(&sources_path) {
         Ok(sources) => sources,
         Err(err) => {
@@ -192,6 +248,7 @@ async fn main() {
                 &item_usage_path,
                 &processed_statements_path,
                 &snapshots_dir,
+                &rules_path,
             )
             .await;
         }
@@ -202,6 +259,7 @@ async fn main() {
                 &item_usage_path,
                 &processed_statements_path,
                 &snapshots_dir,
+                &rules_path,
             )
             .await;
         }
@@ -235,6 +293,7 @@ async fn run_screen_loop(
     item_usage_path: &std::path::Path,
     processed_statements_path: &std::path::Path,
     snapshots_dir: &std::path::Path,
+    rules_path: &std::path::Path,
 ) {
     loop {
         screen = match screen {
@@ -279,7 +338,15 @@ async fn run_screen_loop(
                     eprintln!("warning: this run's data was not saved to history: {err}");
                 }
 
-                match dashboard::run(&result.snapshot, previous.as_ref()) {
+                // Reloaded fresh every entry (same treatment as
+                // `sources` above) — a hand-edit made while on the
+                // Sources screen, or a value just entered via the
+                // first-run prompt below, is picked up without
+                // restarting.
+                let emergency_fund_thresholds =
+                    load_emergency_fund_thresholds_interactive(rules_path);
+
+                match dashboard::run(&result.snapshot, previous.as_ref(), &emergency_fund_thresholds) {
                     Ok(dashboard::DashboardAction::Quit) => return,
                     Ok(dashboard::DashboardAction::GoToSources) => Screen::Sources,
                     Err(err) => {

@@ -1,4 +1,6 @@
 mod account;
+mod emergency_fund;
+mod emergency_fund_storage;
 mod engine;
 mod holdings;
 mod item_usage;
@@ -20,6 +22,14 @@ mod statement_import_storage;
 mod storage;
 
 pub use account::{Account, AccountStatus, Asset, Holding, Liability};
+pub use emergency_fund::{
+    band_for, calculate_emergency_fund_status, EmergencyFundStatus, EmergencyFundThresholds,
+    ThresholdBand,
+};
+pub use emergency_fund_storage::{
+    load_or_init_emergency_fund_thresholds, save_emergency_fund_thresholds,
+    EmergencyFundThresholdsStorageError,
+};
 pub use engine::{run, run_and_save, CredentialSource, RunAndSaveResult};
 pub use holdings::{bucket, classify, AssetClass};
 pub use item_usage::{ItemUsageCounter, PLAID_ITEM_LIMIT, PLAID_ITEM_WARNING_THRESHOLD};

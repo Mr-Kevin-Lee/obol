@@ -1892,3 +1892,77 @@ Previously open questions, now resolved:
   so that a future revision's different numbers don't require a code
   change, but that assumption itself is untested until one actually shows
   up.
+- **D36 — Emergency fund coverage (v0.5a, Phase P): first slice of
+  recommendation tracking, deliberately narrower than D35's full
+  architecture** (§13.1 Type A): four scope decisions, each reversible/
+  extendable later without rework. **(a)** No generic `Recommendation`/
+  `ValueSource` enum yet — D35's §13.2 sketch has four variants but only
+  Type A has real logic behind it this slice; a concrete
+  `EmergencyFundThresholds`/`EmergencyFundStatus` pair avoids wrapping
+  one metric in an otherwise-empty abstraction, matching this codebase's
+  existing preference for "three similar lines over a premature
+  abstraction." The generic enum is introduced in v0.5b once Type D
+  (checklists) actually needs to be distinguished from Type A — no
+  schema/migration cost either way, since this lives in memory/config,
+  not the versioned snapshot schema. **(b)** A new Dashboard panel, not
+  §14's dedicated Recommendations screen — that screen's add/edit/
+  remove UI fits the general case once Type D exists and there's an
+  actual growing, heterogeneous list to manage; v0.5a has exactly one
+  always-present metric with nothing to add or remove.
+  `draw_emergency_fund_coverage` mirrors `draw_holdings_breakdown`'s
+  shape but, unlike it, is **always** rendered, not conditional — an
+  unconfigured/no-data state is itself meaningful status worth always
+  surfacing (same "not buried in a details view" instinct as the Plaid
+  Item usage counter, §7.1). **(c)** Two data sources, handled
+  differently: the cash total (checking + money-market balances) is
+  fully automatic, already-fetched data — no new input. The target
+  monthly-expense figure has no derivable value at all (§3's non-goal:
+  no transaction-level budgeting), so rather than silently defaulting
+  and only showing a "go edit a file" hint, the CLI **prompts for it
+  interactively** the first time the Dashboard screen is entered with
+  it unset, and persists whatever's entered so it's asked at most once.
+  This prompt is plain `stdin`/`stdout` in `main.rs`, run *before*
+  `dashboard::run()` enters raw/alternate-screen mode (ratatui can't
+  easily do simple line-input mid-render) — and is wired only into the
+  interactive Dashboard flow, never a future headless `obol snapshot`
+  run, which can't block on stdin. One attempt per run: blank or
+  invalid input skips and is asked again next run, no retry loop. The
+  red/yellow/green band thresholds keep their spec-given defaults (6/9
+  months, §13.1) — only the target figure has no sensible default, so
+  only it gets a first-run prompt. **(d)** The config file is
+  generically named and shaped — `rules.yaml`, not
+  `emergency_fund_thresholds.yaml` — via a private `RulesFile {
+  emergency_fund: EmergencyFundThresholds }` wrapper (same unwrapping
+  precedent `sources.rs`'s private `SourcesFile` already sets), so a
+  future rule type can add its own top-level section later without
+  renaming or restructuring the file. The *file* is generic; the *Rust
+  API* stays concrete per (a). Saving is a read-modify-write (load the
+  existing file, replace just the `emergency_fund` field, write the
+  whole thing back) rather than a blind overwrite — this matters once a
+  second field is ever added to `RulesFile`, so a save doesn't reset it
+  to a default. **Explicitly not yet solved**: `RulesFile` has no
+  catch-all field, so an unrecognized top-level key in an externally
+  hand-edited file is still dropped on the next save, same as any other
+  typed-struct round-trip in this codebase — worth revisiting only if
+  that ever matters in practice, not solved speculatively here. Finally,
+  `rules.yaml` **fails soft**, unlike `sources.yaml`'s fail-hard
+  treatment (§9.1): a malformed file logs a warning and falls back to
+  defaults rather than exiting the process, since a broken rules file
+  degrades one dashboard panel, not the whole run's ability to know what
+  to fetch.
+  **Addendum — future direction, not built now**: the target
+  monthly-expense figure is currently manual entry, since it's the one
+  number Obol genuinely can't derive from balance data alone. A future
+  version could instead calculate actual monthly expenses by parsing
+  transaction-level detail out of bank/credit-card statements — but
+  that's a real reversal of an existing, explicit boundary, not a small
+  addition: §3's non-goal ("Not a transaction-level budgeting tool")
+  and D28's statement-import design both explicitly scope statement
+  parsing to one balance figure per statement, "never per-transaction
+  detail — no categorization or trend abstraction is introduced
+  anywhere in this design." Revisiting this would mean deliberately
+  narrowing or removing that non-goal, not just extending
+  `StatementParser`, and should be a separate, explicit decision made
+  when it's actually prioritized — noted here so the tension is visible
+  in advance, same as D31's addendum flagged reusing `Holding` data for
+  a future concentration-risk recommendation without building it early.
