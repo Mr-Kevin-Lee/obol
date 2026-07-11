@@ -522,3 +522,93 @@ onward), not needed for one always-present metric yet.
     prompt appears and persists; skip path shows the
     `TargetNotConfigured` fallback; a corrupted `rules.yaml` falls back
     to defaults with a warning rather than crashing).
+
+## Phase Q — Checklist tracking (D37)
+
+v0.5b — Type D (§13.1): a fixed, 7-item checklist with tri-state
+per-item status (Complete/Incomplete/NotApplicable), no precondition/
+auto-hide mechanism this slice (D37). Also generalizes `rules.yaml`
+storage (extracted `rules_storage.rs`) now that a second real section
+(checklist, alongside D36's emergency_fund) needs to share the file.
+Type C stays parked.
+
+68. `crates/core/src/checklist.rs` — `ChecklistItem`, `CHECKLIST_ITEMS`
+    (the 7 spec-confirmed items), `ChecklistItemStatus` (tri-state,
+    `label()`/`cycle()`), `ChecklistStatuses` (`BTreeMap<String,
+    ChecklistItemStatus>`), `status_for()` (defaults to `Incomplete`),
+    `completion_summary()` (excludes `NotApplicable` from the
+    denominator). Test-first. Tests: item-list size/uniqueness, cycle
+    order (all 3 transitions), status-for defaulting, completion-
+    summary counting (including the all-N/A `0/0` edge case), label
+    text, serde round-trip including the unrecognized-string-falls-
+    back-to-Incomplete forward-compat case.
+69. `crates/core/src/rules_storage.rs` (new, extracted from
+    `emergency_fund_storage.rs`) — `RulesFile` (`pub(crate)`, gains a
+    `checklist` field), `load_or_init_rules_file`/`save_rules_file`
+    (`pub(crate)`), `RulesStorageError` (renamed from
+    `EmergencyFundThresholdsStorageError`). Tests: default-file-both-
+    sections, round-trip-both-sections, malformed-file parse error,
+    `0600` permissions.
+70. `crates/core/src/emergency_fund_storage.rs` refactored to a thin
+    wrapper over `rules_storage.rs` — same public signatures/behavior,
+    error type now `RulesStorageError`. Regression test added: saving
+    emergency-fund thresholds doesn't disturb an existing `checklist`
+    section.
+71. `crates/core/src/checklist_storage.rs` (new) —
+    `load_or_init_checklist_statuses`/`set_checklist_item_status`, thin
+    wrapper over `rules_storage.rs`, test-first. Tests: fresh-file empty
+    map, persist-new-entry, update-existing-entry, doesn't-disturb-
+    emergency-fund-section (converse of task 70's regression test —
+    the critical proof the shared extraction is safe in both
+    directions).
+72. `lib.rs` re-exports — new `checklist`/`checklist_storage`/
+    `rules_storage` modules; `RulesStorageError` replaces
+    `EmergencyFundThresholdsStorageError` in the public surface
+    (breaking rename, acceptable pre-1.0).
+73. `crates/cli/src/recommendations_screen.rs` (new) — sync (no async
+    I/O needed, unlike `sources_screen.rs`'s Plaid-driven `async fn`),
+    manual `"> "`-prefix cursor list (no `ListState`), `Space` cycles
+    the selected item's status and persists immediately
+    (`multi_select_accounts`'s existing convention), `[x]`/`[ ]`/`[-]`
+    symbol markers (`BLUISH_GREEN` for Complete only — symbol alone
+    already satisfies FR27 for the other two states), `q`/`Esc` quits,
+    `v` returns to Dashboard (same key `sources_screen.rs` already uses
+    for this). Manual TUI verification only (§5/D9).
+74. `crates/cli/src/dashboard.rs` wiring — always-visible checklist
+    panel showing every item's description and status symbol
+    (`[x]`/`[ ]`/`[-]`), not just a count (revised from an initial
+    one-line-summary-only version once it shipped — the full list
+    reads better without a screen switch, same "one line per entry
+    inside a bordered panel" shape as the holdings-breakdown panel),
+    title bar still carries the "X/N complete (press 'r' to manage)"
+    figure via `completion_summary()`. New `DashboardAction::
+    GoToRecommendations`, `'r'` keybinding, footer text update. Manual
+    TUI verification only.
+75. `crates/cli/src/main.rs` wiring — `mod recommendations_screen;`,
+    new `Screen::Recommendations` variant in `run_screen_loop`'s match
+    (mirrors `Screen::Sources`/`Screen::Dashboard` exactly), checklist
+    statuses loaded fresh every Dashboard entry (fail-soft with a
+    warning on a malformed file, same treatment as the emergency-fund
+    loader) and threaded into `dashboard::run`. Minimal navigation:
+    Dashboard ↔ Recommendations only (no direct Recommendations ↔
+    Sources edge — Dashboard is already the hub). Manual verification
+    only.
+76. `docs/spec.md` — real edit to §13.1's "D. Checklist items" body
+    text (tri-state model, drop the precondition/auto-hide paragraph,
+    note `NotApplicable` as the v0.5b manual escape hatch) + new D37
+    decision record. Also fixed two stale/inaccurate spec statements
+    found while editing this section: §13.2's `recommendations.yaml`
+    reference (never actually built — the real file is `rules.yaml`,
+    D36) and its claim that `rules.yaml`/`sources.yaml` writes are
+    covered by the advisory file lock (confirmed by inspection that
+    `acquire_with_timeout`/`FileLock` are never actually called from
+    any storage module or `main.rs` — a real, pre-existing gap, not
+    specific to this phase). Plus **D38**: explored, explicitly parked
+    a much larger extension (replacing Quicken Simplifi with
+    transaction-level spend categorization from Chase/Apple Card
+    statements) — not scoped for any upcoming phase.
+77. This Phase Q entry; verify build/tests, commit, manual end-to-end
+    walkthrough (cycle all 7 items through all 3 states via the new
+    screen, confirm persistence across restarts, confirm the Dashboard
+    summary and emergency-fund panel both still render correctly and
+    independently after the `rules_storage.rs` extraction).

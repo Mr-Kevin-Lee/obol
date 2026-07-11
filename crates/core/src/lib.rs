@@ -1,4 +1,6 @@
 mod account;
+mod checklist;
+mod checklist_storage;
 mod emergency_fund;
 mod emergency_fund_storage;
 mod engine;
@@ -15,6 +17,7 @@ mod plaid_link;
 mod plaid_provider;
 mod provider;
 mod retry;
+mod rules_storage;
 mod snapshot;
 mod sources;
 mod statement_import;
@@ -22,13 +25,17 @@ mod statement_import_storage;
 mod storage;
 
 pub use account::{Account, AccountStatus, Asset, Holding, Liability};
+pub use checklist::{
+    completion_summary, status_for, ChecklistItem, ChecklistItemStatus, ChecklistStatuses,
+    CHECKLIST_ITEMS,
+};
+pub use checklist_storage::{load_or_init_checklist_statuses, set_checklist_item_status};
 pub use emergency_fund::{
     band_for, calculate_emergency_fund_status, EmergencyFundStatus, EmergencyFundThresholds,
     ThresholdBand,
 };
 pub use emergency_fund_storage::{
     load_or_init_emergency_fund_thresholds, save_emergency_fund_thresholds,
-    EmergencyFundThresholdsStorageError,
 };
 pub use engine::{run, run_and_save, CredentialSource, RunAndSaveResult};
 pub use holdings::{bucket, classify, AssetClass};
@@ -54,6 +61,7 @@ pub use provider::{
     provider_registry, Credentials, Provider, ProviderError, ProviderFactory, SourceConfig,
 };
 pub use retry::{with_retry, RetryConfig, RetryableError};
+pub use rules_storage::RulesStorageError;
 pub use snapshot::{AccountRecord, Category, Snapshot, Status};
 pub use sources::{add_source, edit_source, load_or_init, remove_source, SourcesError};
 pub use statement_import::{

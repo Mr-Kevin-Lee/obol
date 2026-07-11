@@ -1,6 +1,7 @@
 mod dashboard;
 mod form;
 mod mode;
+mod recommendations_screen;
 mod sources_screen;
 
 use std::io::Write;
@@ -277,6 +278,7 @@ async fn main() {
 enum Screen {
     Dashboard,
     Sources,
+    Recommendations,
 }
 
 /// Bounces between the Dashboard and Sources screens on their `s`/`v`
@@ -307,6 +309,16 @@ async fn run_screen_loop(
                     }
                 }
             }
+            Screen::Recommendations => match recommendations_screen::run(rules_path) {
+                Ok(recommendations_screen::RecommendationsAction::Quit) => return,
+                Ok(recommendations_screen::RecommendationsAction::GoToDashboard) => {
+                    Screen::Dashboard
+                }
+                Err(err) => {
+                    eprintln!("recommendations screen failed: {err}");
+                    std::process::exit(1);
+                }
+            },
             Screen::Dashboard => {
                 let sources = match obol_core::load_or_init(sources_path) {
                     Ok(sources) => sources,
@@ -345,10 +357,23 @@ async fn run_screen_loop(
                 // restarting.
                 let emergency_fund_thresholds =
                     load_emergency_fund_thresholds_interactive(rules_path);
+                let checklist_statuses = obol_core::load_or_init_checklist_statuses(rules_path)
+                    .unwrap_or_else(|err| {
+                        eprintln!(
+                            "warning: rules.yaml could not be read ({err}) — using an empty checklist"
+                        );
+                        obol_core::ChecklistStatuses::default()
+                    });
 
-                match dashboard::run(&result.snapshot, previous.as_ref(), &emergency_fund_thresholds) {
+                match dashboard::run(
+                    &result.snapshot,
+                    previous.as_ref(),
+                    &emergency_fund_thresholds,
+                    &checklist_statuses,
+                ) {
                     Ok(dashboard::DashboardAction::Quit) => return,
                     Ok(dashboard::DashboardAction::GoToSources) => Screen::Sources,
+                    Ok(dashboard::DashboardAction::GoToRecommendations) => Screen::Recommendations,
                     Err(err) => {
                         eprintln!("dashboard rendering failed: {err}");
                         std::process::exit(1);

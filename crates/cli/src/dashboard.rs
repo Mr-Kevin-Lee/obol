@@ -20,8 +20,9 @@ use ratatui::Frame;
 use ratatui::Terminal;
 
 use obol_core::{
-    AccountRecord, AssetClass, Category, EmergencyFundStatus, EmergencyFundThresholds, Holding,
-    NetWorth, Snapshot, Status, ThresholdBand,
+    completion_summary, status_for, AccountRecord, AssetClass, Category, ChecklistItemStatus,
+    ChecklistStatuses, EmergencyFundStatus, EmergencyFundThresholds, Holding, NetWorth, Snapshot,
+    Status, ThresholdBand, CHECKLIST_ITEMS,
 };
 
 // Okabe–Ito palette (§13) — chosen over red/green specifically so
@@ -38,6 +39,9 @@ pub enum DashboardAction {
     /// process. `main.rs` loops between the two screens on this signal
     /// rather than requiring a full quit-and-rerun to manage sources.
     GoToSources,
+    /// `r` was pressed — jump to the Recommendations screen (spec §13,
+    /// D37) without exiting the process, same shape as `GoToSources`.
+    GoToRecommendations,
 }
 
 /// Enters the alternate screen, draws the dashboard once (§13: "No
@@ -58,16 +62,28 @@ pub enum DashboardAction {
 /// if needed, interactively prompted for by the caller *before* this
 /// function is entered, since that prompt needs plain cooked-terminal
 /// stdin, not the raw/alternate-screen mode this function sets up.
+///
+/// `checklist_statuses` (spec §13.1 Type D, D37) — loaded fresh by the
+/// caller on every entry, same treatment as `emergency_fund_thresholds`.
 pub fn run(
     snapshot: &Snapshot,
     previous: Option<&Snapshot>,
     emergency_fund_thresholds: &EmergencyFundThresholds,
+    checklist_statuses: &ChecklistStatuses,
 ) -> io::Result<DashboardAction> {
     enable_raw_mode()?;
     io::stdout().execute(EnterAlternateScreen)?;
     let mut terminal = Terminal::new(CrosstermBackend::new(io::stdout()))?;
 
-    terminal.draw(|frame| draw(frame, snapshot, previous, emergency_fund_thresholds))?;
+    terminal.draw(|frame| {
+        draw(
+            frame,
+            snapshot,
+            previous,
+            emergency_fund_thresholds,
+            checklist_statuses,
+        )
+    })?;
     let action = loop {
         let Event::Key(key) = event::read()? else {
             continue;
@@ -77,6 +93,7 @@ pub fn run(
         }
         match key.code {
             KeyCode::Char('s') => break DashboardAction::GoToSources,
+            KeyCode::Char('r') => break DashboardAction::GoToRecommendations,
             _ => break DashboardAction::Quit,
         }
     };
@@ -91,6 +108,7 @@ fn draw(
     snapshot: &Snapshot,
     previous: Option<&Snapshot>,
     emergency_fund_thresholds: &EmergencyFundThresholds,
+    checklist_statuses: &ChecklistStatuses,
 ) {
     // Spec D31: pooled across every holdings-bearing account in this
     // snapshot (today, at most one — Vanguard Brokerage), not just the
@@ -117,6 +135,13 @@ fn draw(
         // surfacing (same "not buried in a details view" instinct as
         // the Plaid Item usage counter, §7.1), not just hidden.
         Constraint::Length(3), // emergency fund coverage
+        // Spec §13.1 Type D, D37: same always-rendered instinct as
+        // emergency fund coverage above — the full 7-item list, not
+        // just a count, so the current state is visible without
+        // leaving the Dashboard (+2 for the panel's own border/title
+        // lines, one line per item, same shape as the holdings-
+        // breakdown panel below).
+        Constraint::Length(CHECKLIST_ITEMS.len() as u16 + 2), // checklist
     ];
     if !buckets.is_empty() {
         // +2 for the panel's own border/title lines, one line per bucket.
@@ -134,8 +159,9 @@ fn draw(
     draw_title(frame, areas[0]);
     draw_net_worth(frame, areas[1], snapshot, previous);
     draw_emergency_fund_coverage(frame, areas[2], &emergency_fund_status);
+    draw_checklist(frame, areas[3], checklist_statuses);
 
-    let mut next = 3;
+    let mut next = 4;
     if !buckets.is_empty() {
         draw_holdings_breakdown(frame, areas[next], &buckets);
         next += 1;
@@ -275,6 +301,48 @@ fn draw_emergency_fund_coverage(frame: &mut Frame, area: Rect, status: &Emergenc
     );
 }
 
+/// The full checklist (spec §13.1 Type D, D37) — every item and its
+/// current status, always rendered (same "not buried in a details
+/// view" instinct as the emergency-fund panel above), not just a
+/// count. Read-only here; toggling happens on the Recommendations
+/// screen (`'r'`). Mirrors `draw_holdings_breakdown`'s "one line per
+/// entry inside a bordered panel" shape. `[x]`/`[ ]`/`[-]` symbol
+/// markers disambiguate every state regardless of color (FR27);
+/// `BLUISH_GREEN` is added on top for Complete only, matching
+/// `recommendations_screen.rs`'s own rendering exactly.
+fn draw_checklist(frame: &mut Frame, area: Rect, statuses: &ChecklistStatuses) {
+    let (complete, total) = completion_summary(statuses);
+
+    let lines: Vec<Line> = CHECKLIST_ITEMS
+        .iter()
+        .map(|item| {
+            let status = status_for(statuses, item.id);
+            let (symbol, color) = match status {
+                ChecklistItemStatus::Complete => ("[x]", Some(BLUISH_GREEN)),
+                ChecklistItemStatus::Incomplete => ("[ ]", None),
+                ChecklistItemStatus::NotApplicable => ("[-]", None),
+            };
+            let mut style = Style::default();
+            if let Some(color) = color {
+                style = style.fg(color);
+            }
+            Line::from(vec![
+                Span::raw(format!("{symbol} ")),
+                Span::styled(item.description, style),
+            ])
+        })
+        .collect();
+
+    frame.render_widget(
+        Paragraph::new(lines).block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title(format!("Checklist — {complete}/{total} complete (press 'r' to manage)")),
+        ),
+        area,
+    );
+}
+
 fn threshold_band_color(band: ThresholdBand) -> Color {
     match band {
         ThresholdBand::Red => VERMILLION,
@@ -333,11 +401,12 @@ fn draw_group(
     accounts: &[AccountRecord],
     category: Category,
 ) {
-    let items: Vec<ListItem> = accounts
+    let matching: Vec<&AccountRecord> = accounts
         .iter()
         .filter(|record| record.category() == category)
-        .map(record_to_list_item)
         .collect();
+
+    let items: Vec<ListItem> = matching.iter().map(|record| record_to_list_item(record)).collect();
 
     let list = if items.is_empty() {
         List::new(vec![ListItem::new("(none configured)")])
@@ -345,8 +414,19 @@ fn draw_group(
         List::new(items)
     };
 
+    // Sum of only Status::Ok balances — an errored account has no
+    // trustworthy figure to add in, same "excluded from the total"
+    // instinct calculate_net_worth already applies (§12, §9.1), just
+    // per-group rather than net.
+    let subtotal: f64 = matching
+        .iter()
+        .filter(|record| record.status() == Status::Ok)
+        .filter_map(|record| record.balance())
+        .sum();
+    let panel_title = format!("{title} — ${subtotal:.2}");
+
     frame.render_widget(
-        list.block(Block::default().borders(Borders::ALL).title(title)),
+        list.block(Block::default().borders(Borders::ALL).title(panel_title)),
         area,
     );
 }
@@ -385,7 +465,7 @@ fn record_to_list_item(record: &AccountRecord) -> ListItem<'static> {
 
 fn draw_footer(frame: &mut Frame, area: Rect) {
     frame.render_widget(
-        Paragraph::new("s: manage sources   (any other key): quit"),
+        Paragraph::new("s: manage sources   r: checklist   (any other key): quit"),
         area,
     );
 }

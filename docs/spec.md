@@ -1064,23 +1064,35 @@ known value plus how stale it is:
   (standard industry convention, not specific to your plan).
 - Any other advisor-computed projection you want tracked over time.
 
-**D. Checklist items** — complete or incomplete, no threshold at all,
-displayed the same way the Plaid Item usage counter shows "X/10":
+**D. Checklist items** — no threshold at all, displayed the same way the
+Plaid Item usage counter shows "X/10". As of v0.5b (D37), each item's status
+is **tri-state** — `Complete`, `Incomplete`, or `Not Applicable` — not a
+plain complete/incomplete boolean. `Not Applicable` is a per-item, user-set
+manual override for "this doesn't apply to me," and is excluded from both
+the numerator and denominator of the "X/N complete" figure (only
+`Complete`/`Incomplete` items count toward N):
 - Estate documents (Will, Revocable Living Trust, Medical POA, Financial POA,
   Living Will, HIPAA release) — "4/6 complete," etc.
 - Own-occupation disability insurance in place
-- Term life insurance in place (activation-conditioned — see below)
-- Retirement account rollovers completed
+- Term life insurance in place
+- Retirement account rollover(s) completed
 - Roth vs. pre-tax 401(k) election
 - FSA enrollment
 - ESPP participation / immediate-sale discipline
 
-**Activation conditions:** some checklist items only become relevant given
-another event (e.g. a life insurance need conditioned on a home purchase
-closing). Rather than showing an irrelevant item as "incomplete"
-indefinitely, each checklist item can optionally declare a simple
-precondition (e.g. "only show once `home_purchased` is true") — a small
-boolean flag you set yourself, not something Obol infers.
+This is a **fixed, hardcoded list of exactly these 7 items** for v0.5b —
+not user-addable/removable (unlike types A–C's config-driven model, §13.2).
+
+**No precondition/auto-hide mechanism in v0.5b (D37).** An earlier draft of
+this section described an optional per-item precondition (e.g. "only show
+once `home_purchased` is true") to hide an irrelevant item entirely rather
+than showing it as perpetually incomplete. That mechanism is deferred —
+`Not Applicable` is the manual escape hatch instead: all 7 items are always
+shown, and marking one `Not Applicable` is a manual, user-driven action, not
+an automatic inference from other state. A deliberate simplification, not a
+dropped requirement — `Not Applicable` and a future automatic `Hidden` state
+aren't mutually exclusive, so auto-hide can be layered on top of this same
+tri-state model later without a data-model rework.
 
 **A forward-looking connection, not a v1 scope expansion:** the `Holding`
 type and `holdings()` mechanism added for the concentration-risk breakdown
@@ -1112,15 +1124,26 @@ struct Recommendation {
 }
 ```
 
-Recommendation definitions and their editable thresholds live in a
-`recommendations.yaml`, managed through the UI exactly like `sources.yaml`
-(§10.1) — no hand-editing required, and the same atomic-write / `0600`
-treatment (§4, §11.1) applies, since threshold values and manually-entered
-figures (income, insurance amounts) are meaningfully sensitive even though
-they're not credentials. Writes to `recommendations.yaml` are covered by the
-same advisory file lock as `sources.yaml` and snapshot writes (§9.1, D13) —
-one more write-critical section under the existing lock, not a new
-concurrency mechanism.
+Recommendation definitions and their editable thresholds live in
+`rules.yaml` (named and shaped generically per D36, not literally
+`recommendations.yaml` as an earlier draft of this section said) — a
+growing set of named sections, one per rule type, not the single
+polymorphic `Vec<Recommendation>` sketched above. **D36/D37 implement this
+iteratively, per slice, with concrete types rather than the fully generic
+`Recommendation`/`ValueSource` struct shown above** — v0.5a's
+`EmergencyFundThresholds` and v0.5b's `ChecklistStatuses` are each their own
+narrow, concrete section of `rules.yaml`, not instances of a shared
+`Recommendation` type. The generic wrapper sketched here is deferred until a
+real second case actually needs to be polymorphic over `ValueSource`
+variants, not built speculatively ahead of that (see D36's reasoning).
+`rules.yaml`'s atomic-write / `0600` treatment (§4, §11.1) matches
+`sources.yaml`'s exactly. **Neither file is actually wired through the
+advisory file lock yet** (confirmed by inspection: `acquire_with_timeout`/
+`FileLock`, §9.1/D13, are only referenced inside `lock.rs`'s own tests —
+no call site in `main.rs` or any storage module actually acquires it) —
+this section's original "covered by the same lock" plan was aspirational,
+not yet true of `sources.yaml` either. A gap to close for both files
+together, not something specific to `rules.yaml`.
 
 **Display:** a dedicated screen (§14) shows every recommendation's current
 status using the same colorblind-safe, never-color-alone convention as the
@@ -1966,3 +1989,74 @@ Previously open questions, now resolved:
   when it's actually prioritized — noted here so the tension is visible
   in advance, same as D31's addendum flagged reusing `Holding` data for
   a future concentration-risk recommendation without building it early.
+  **See D38** for the broader version of this same idea (full
+  Simplifi-replacement spend categorization, not just this one target
+  figure), explored and explicitly parked.
+- **D37 — Checklist tracking (v0.5b, Phase Q): tri-state status, no
+  precondition mechanism yet, `rules_storage.rs` extraction** (§13.1
+  Type D): second slice of recommendation tracking, confirmed via
+  direct conversation. **Tri-state, not binary**: `Complete` /
+  `Incomplete` / `NotApplicable`, replacing the earlier binary
+  complete/incomplete model — `NotApplicable` is excluded from both the
+  numerator and denominator of the "X/N complete" figure, since an item
+  marked "doesn't apply to me" shouldn't count against the ratio.
+  **Type C stays parked** (not designed or built). The 7-item checklist
+  list is fixed/hardcoded for this slice, not user-addable/removable.
+  **No precondition/auto-hide mechanism** — an earlier draft described
+  a per-item precondition that would hide an item entirely until
+  relevant; this is deferred in favor of the simpler tri-state-only
+  model, with `NotApplicable` as the manual escape hatch instead.
+  Explicitly not mutually exclusive with a future automatic `Hidden`
+  state, so auto-hide can be layered on later without a data-model
+  rework. **`rules_storage.rs` extracted** from `emergency_fund_storage.rs`
+  once `checklist` became a second real section of the same
+  `rules.yaml` file (anticipated by D36) — sharing the load/save
+  mechanics avoids two independent read-modify-write cycles racing on
+  one physical file, a real correctness hazard, not just duplication;
+  `RulesStorageError` replaces the narrower
+  `EmergencyFundThresholdsStorageError` (breaking rename, fine
+  pre-1.0). **The dedicated Recommendations screen is built this
+  slice** (`recommendations_screen.rs`), inverting D36's panel-only
+  decision — D36's own addendum named exactly this case (an actual
+  growing, heterogeneous list of items to manage) as the trigger for
+  building it, and Type D is that case. Dashboard gains an always-
+  visible checklist panel (every item's description + `[x]`/`[ ]`/`[-]`
+  status symbol, title bar carrying the "X/N complete" figure — not
+  just a one-line count, revised once the initial summary-only version
+  shipped and read as too little detail) alongside the emergency-fund
+  panel, navigable via a new `'r'` key; the dedicated screen itself is
+  where toggling actually happens, using `Space` to cycle the selected
+  item's status and persist immediately (no batching), mirroring the
+  existing `sources_screen.rs` list-navigation and
+  `multi_select_accounts` toggle conventions rather than introducing
+  new ones.
+- **D38 — Transaction-level budgeting (replacing Quicken Simplifi):
+  explored, explicitly parked, not built** (§3): raised as a possible
+  extension — using the already-parsed Chase and Apple Card statements
+  to categorize spend the way Simplifi does today, rather than just
+  extracting one balance figure per statement. This would directly
+  reverse two things already written into this spec as explicit
+  boundaries: §3's non-goal ("Not a transaction-level budgeting tool")
+  and D28's statement-import design ("never per-transaction detail —
+  no categorization or trend abstraction is introduced anywhere in
+  this design"). Explored but **parked, not scoped for any upcoming
+  phase**. Two findings from that exploration, worth keeping if this is
+  ever revisited: **(1)** itemized-transaction parsing is a
+  meaningfully larger surface than balance extraction — real statement
+  text already confirms Chase's checking statement has a full
+  `TRANSACTION DETAIL` table (dates, descriptions, amounts, running
+  balance) that would need robust per-row parsing, not a single
+  dollar-figure search, and every institution's layout differs.
+  **(2)** categorization is the harder half of the problem — tools
+  like Simplifi lean on an aggregator's pre-trained categorization
+  (Plaid's separate *Transactions* product, distinct from the *Balance*
+  product this app uses today, D22), not hand-rolled merchant-name
+  rules with no training data behind them. If revisited: Chase could
+  plausibly use Plaid Transactions (real Plaid access already
+  established) for categorized data with comparatively little new
+  parsing work; **Apple Card has no aggregator path at all** (the
+  reason it's on statement-import in the first place, D30), so it would
+  need real itemized-transaction PDF parsing with no categorization
+  help from anywhere — the harder of the two by a wide margin. Any
+  future work here should be scoped as its own project phase, not
+  folded into the recommendation-tracking work D35–D37 cover.
