@@ -8,6 +8,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::snapshot::{AccountRecord, Status};
+use crate::threshold_band::ThresholdBand;
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
 pub struct EmergencyFundThresholds {
@@ -30,23 +31,6 @@ impl Default for EmergencyFundThresholds {
             target_monthly_expenses: 0.0,
             red_below_months: 6.0,
             green_at_or_above_months: 9.0,
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ThresholdBand {
-    Red,
-    Yellow,
-    Green,
-}
-
-impl ThresholdBand {
-    pub fn label(&self) -> &'static str {
-        match self {
-            ThresholdBand::Red => "Red",
-            ThresholdBand::Yellow => "Yellow",
-            ThresholdBand::Green => "Green",
         }
     }
 }

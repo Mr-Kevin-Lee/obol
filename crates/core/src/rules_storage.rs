@@ -18,6 +18,7 @@ use thiserror::Error;
 
 use crate::checklist::ChecklistStatuses;
 use crate::emergency_fund::EmergencyFundThresholds;
+use crate::monthly_spend::MonthlySpendThresholds;
 
 /// The on-disk shape of `rules.yaml` — a small, growing set of named
 /// sections, one per rule type. A future section is added the same way
@@ -29,6 +30,8 @@ pub(crate) struct RulesFile {
     pub(crate) emergency_fund: EmergencyFundThresholds,
     #[serde(default)]
     pub(crate) checklist: ChecklistStatuses,
+    #[serde(default)]
+    pub(crate) monthly_spend: MonthlySpendThresholds,
 }
 
 #[derive(Debug, Error)]
@@ -89,21 +92,22 @@ mod tests {
     }
 
     #[test]
-    fn load_or_init_creates_a_default_rules_file_with_both_sections_empty_defaults() {
+    fn load_or_init_creates_a_default_rules_file_with_all_sections_at_their_defaults() {
         let path = temp_path("first-run");
         let _ = fs::remove_file(&path);
 
         let rules_file = load_or_init_rules_file(&path).unwrap();
         assert_eq!(rules_file.emergency_fund, EmergencyFundThresholds::default());
         assert!(rules_file.checklist.is_empty());
+        assert_eq!(rules_file.monthly_spend, MonthlySpendThresholds::default());
         assert!(path.exists());
 
         fs::remove_file(&path).ok();
     }
 
     #[test]
-    fn rules_file_round_trips_with_both_sections_populated() {
-        let path = temp_path("roundtrip-both");
+    fn rules_file_round_trips_with_all_sections_populated() {
+        let path = temp_path("roundtrip-all");
         let _ = fs::remove_file(&path);
 
         let mut rules_file = RulesFile {
@@ -113,6 +117,10 @@ mod tests {
                 green_at_or_above_months: 9.0,
             },
             checklist: ChecklistStatuses::new(),
+            monthly_spend: MonthlySpendThresholds {
+                yellow_at_or_above: 8000.0,
+                red_at_or_above: 11000.0,
+            },
         };
         rules_file
             .checklist
@@ -123,6 +131,7 @@ mod tests {
 
         assert_eq!(loaded.emergency_fund, rules_file.emergency_fund);
         assert_eq!(loaded.checklist, rules_file.checklist);
+        assert_eq!(loaded.monthly_spend, rules_file.monthly_spend);
 
         fs::remove_file(&path).ok();
     }

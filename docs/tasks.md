@@ -612,3 +612,82 @@ Type C stays parked.
     screen, confirm persistence across restarts, confirm the Dashboard
     summary and emergency-fund panel both still render correctly and
     independently after the `rules_storage.rs` extraction).
+
+## Phase R — Credit card spend trend chart (D39)
+
+Charts `Category::Liability` account totals (Chase credit card + Apple
+Card today) across recent snapshots as a "monthly spend" proxy — no
+transaction-level parsing, just a time series over balance figures
+already extracted every run. Explicitly narrower than D38's parked
+scope, not a reopening of it. Ratatui's first real chart widget usage
+in this codebase.
+
+78. `crates/core/src/threshold_band.rs` (new, extracted) — `ThresholdBand`
+    + `label()` moved out of `emergency_fund.rs` verbatim, no behavior
+    change, once `monthly_spend.rs` became a second real consumer with
+    an inverted comparison direction. `emergency_fund.rs`'s existing
+    boundary tests continue passing unchanged, proving the move is
+    behavior-preserving.
+79. `crates/core/src/monthly_spend.rs` — `MonthlySpendThresholds`
+    (user-given $8,000/$11,000 defaults, no unconfigured sentinel
+    needed unlike emergency fund's target figure), `HISTORY_LIMIT = 18`,
+    `band_for_spend()` (inverted "higher is worse" direction),
+    `CurrentPeriodSpend` (mirrors `EmergencyFundStatus`'s
+    never-a-bare-misleading-number shape), `calculate_current_period_spend()`,
+    `SpendPoint`/`extract_spend_series()` (re-sorts `load_recent_snapshots`'s
+    newest-first input to oldest-first, parses each snapshot's
+    `created_at` via RFC3339, keeps a point whose timestamp fails to
+    parse rather than dropping it). Test-first. Adds `"parsing"` to
+    `crates/core/Cargo.toml`'s `time` feature list (previously only
+    `"std"`/`"formatting"` — nothing parsed an RFC3339 string back
+    before this).
+80. `crates/core/src/monthly_spend_storage.rs` (new) — thin wrapper over
+    `rules_storage.rs`, mirroring `emergency_fund_storage.rs`
+    exactly, test-first. Includes a cross-section regression test
+    proving a `monthly_spend` save doesn't disturb the existing
+    `emergency_fund`/`checklist` sections.
+81. `crates/core/src/rules_storage.rs` — `RulesFile` gains
+    `#[serde(default)] monthly_spend: MonthlySpendThresholds`. Existing
+    round-trip test extended to cover all three sections.
+82. `lib.rs` re-exports for the new modules; `ThresholdBand`'s
+    re-export moves from the `emergency_fund` line to a new
+    `threshold_band` line (public path `obol_core::ThresholdBand`
+    unchanged).
+83. `crates/cli/src/monthly_spend_screen.rs` (new) — sync (no async I/O
+    needed, same reasoning as `recommendations_screen.rs`). First real
+    `ratatui::widgets::{Chart, Dataset, Axis, GraphType}` usage in this
+    codebase: a status line (most recent point's total + band, text +
+    color per FR27) above a line chart of the historical series, with
+    two flat reference-line datasets at the yellow/red thresholds.
+    Real-timestamp x-axis (not a simplified index) with first/middle/
+    last date labels, y-axis padded above the higher of the data max
+    and the red threshold so the reference line is always visible. A
+    single point pads the x-axis bounds by ±1 day so it still renders;
+    zero dated points shows a "not enough history" message instead of
+    a degenerate chart. `q`/`Esc` quits, `v` returns to Dashboard (same
+    keys `recommendations_screen.rs` already uses). `crates/cli`
+    gained `time` as a new direct dependency (`"std"` feature only —
+    dates are formatted via plain `Month`/`day()` field access, not
+    the `format_description!` macro system, avoiding two extra feature
+    flags for one simple label). Manual TUI verification only (§5/D9).
+84. `crates/cli/src/dashboard.rs` wiring — `draw_monthly_spend_summary()`,
+    always-rendered one-line panel mirroring
+    `draw_emergency_fund_coverage` exactly, computed on the live
+    just-fetched snapshot. New `DashboardAction::GoToMonthlySpendChart`,
+    `'c'` keybinding, footer text update. Manual TUI verification only.
+85. `crates/cli/src/main.rs` wiring — `mod monthly_spend_screen;`, new
+    `Screen::MonthlySpendChart` variant mirroring the existing
+    `Screen::Recommendations` arm exactly, thresholds loaded fresh
+    every Dashboard entry (fail-soft with a warning on a malformed
+    file, same treatment as `checklist_statuses`) and threaded into
+    `dashboard::run`. Navigation stays Dashboard↔MonthlySpendChart
+    only. Manual verification only.
+86. `docs/spec.md` — new §13.4 subsection (deliberately not force-fit
+    into §13.1's Type A–D taxonomy — this is a charted history, not a
+    single value + band) plus updates to §14's screen list/bullets, and
+    a new D39 decision record.
+87. This Phase R entry; verify build/tests, commit, manual end-to-end
+    walkthrough (Dashboard summary renders with a plausible total/band;
+    `'c'` opens the chart with yellow/red reference lines visible at
+    the configured thresholds; the chart screen's status line and the
+    Dashboard summary agree; `'v'` returns to Dashboard correctly).

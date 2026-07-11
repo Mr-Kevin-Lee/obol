@@ -20,9 +20,10 @@ use ratatui::Frame;
 use ratatui::Terminal;
 
 use obol_core::{
-    completion_summary, status_for, AccountRecord, AssetClass, Category, ChecklistItemStatus,
-    ChecklistStatuses, EmergencyFundStatus, EmergencyFundThresholds, Holding, NetWorth, Snapshot,
-    Status, ThresholdBand, CHECKLIST_ITEMS,
+    calculate_current_period_spend, completion_summary, status_for, AccountRecord, AssetClass,
+    Category, ChecklistItemStatus, ChecklistStatuses, CurrentPeriodSpend, EmergencyFundStatus,
+    EmergencyFundThresholds, Holding, MonthlySpendThresholds, NetWorth, Snapshot, Status,
+    ThresholdBand, CHECKLIST_ITEMS,
 };
 
 // Okabe–Ito palette (§13) — chosen over red/green specifically so
@@ -42,6 +43,9 @@ pub enum DashboardAction {
     /// `r` was pressed — jump to the Recommendations screen (spec §13,
     /// D37) without exiting the process, same shape as `GoToSources`.
     GoToRecommendations,
+    /// `c` was pressed — jump to the credit card spend trend chart
+    /// screen (spec §13.4, D39), same shape as `GoToSources`.
+    GoToMonthlySpendChart,
 }
 
 /// Enters the alternate screen, draws the dashboard once (§13: "No
@@ -65,11 +69,15 @@ pub enum DashboardAction {
 ///
 /// `checklist_statuses` (spec §13.1 Type D, D37) — loaded fresh by the
 /// caller on every entry, same treatment as `emergency_fund_thresholds`.
+///
+/// `monthly_spend_thresholds` (spec §13.4, D39) — same reload-per-entry
+/// treatment.
 pub fn run(
     snapshot: &Snapshot,
     previous: Option<&Snapshot>,
     emergency_fund_thresholds: &EmergencyFundThresholds,
     checklist_statuses: &ChecklistStatuses,
+    monthly_spend_thresholds: &MonthlySpendThresholds,
 ) -> io::Result<DashboardAction> {
     enable_raw_mode()?;
     io::stdout().execute(EnterAlternateScreen)?;
@@ -82,6 +90,7 @@ pub fn run(
             previous,
             emergency_fund_thresholds,
             checklist_statuses,
+            monthly_spend_thresholds,
         )
     })?;
     let action = loop {
@@ -94,6 +103,7 @@ pub fn run(
         match key.code {
             KeyCode::Char('s') => break DashboardAction::GoToSources,
             KeyCode::Char('r') => break DashboardAction::GoToRecommendations,
+            KeyCode::Char('c') => break DashboardAction::GoToMonthlySpendChart,
             _ => break DashboardAction::Quit,
         }
     };
@@ -109,6 +119,7 @@ fn draw(
     previous: Option<&Snapshot>,
     emergency_fund_thresholds: &EmergencyFundThresholds,
     checklist_statuses: &ChecklistStatuses,
+    monthly_spend_thresholds: &MonthlySpendThresholds,
 ) {
     // Spec D31: pooled across every holdings-bearing account in this
     // snapshot (today, at most one — Vanguard Brokerage), not just the
@@ -125,6 +136,8 @@ fn draw(
 
     let emergency_fund_status =
         obol_core::calculate_emergency_fund_status(&snapshot.accounts, emergency_fund_thresholds);
+    let monthly_spend_status =
+        calculate_current_period_spend(&snapshot.accounts, monthly_spend_thresholds);
 
     let mut constraints = vec![
         Constraint::Length(3), // title
@@ -135,6 +148,8 @@ fn draw(
         // surfacing (same "not buried in a details view" instinct as
         // the Plaid Item usage counter, §7.1), not just hidden.
         Constraint::Length(3), // emergency fund coverage
+        // Spec §13.4, D39: same always-rendered instinct.
+        Constraint::Length(3), // credit card spend trend summary
         // Spec §13.1 Type D, D37: same always-rendered instinct as
         // emergency fund coverage above — the full 7-item list, not
         // just a count, so the current state is visible without
@@ -159,9 +174,10 @@ fn draw(
     draw_title(frame, areas[0]);
     draw_net_worth(frame, areas[1], snapshot, previous);
     draw_emergency_fund_coverage(frame, areas[2], &emergency_fund_status);
-    draw_checklist(frame, areas[3], checklist_statuses);
+    draw_monthly_spend_summary(frame, areas[3], &monthly_spend_status);
+    draw_checklist(frame, areas[4], checklist_statuses);
 
-    let mut next = 4;
+    let mut next = 5;
     if !buckets.is_empty() {
         draw_holdings_breakdown(frame, areas[next], &buckets);
         next += 1;
@@ -292,6 +308,42 @@ fn draw_emergency_fund_coverage(frame: &mut Frame, area: Rect, status: &Emergenc
         // common path.
         EmergencyFundStatus::TargetNotConfigured => Line::from(Span::raw(
             "Emergency fund: target monthly expenses not set — rerun to be prompted, or edit rules.yaml",
+        )),
+    };
+
+    frame.render_widget(
+        Paragraph::new(line).block(Block::default().borders(Borders::ALL)),
+        area,
+    );
+}
+
+/// Credit card spend trend summary (spec §13.4, D39) — one line, always
+/// rendered, mirroring `draw_emergency_fund_coverage` exactly. Computed
+/// on the live, just-fetched snapshot (not reloaded from disk), same as
+/// the emergency-fund panel. The actual chart lives on its own screen
+/// (`'c'`) — a chart needs real space to be legible, and the Dashboard
+/// is already dense.
+fn draw_monthly_spend_summary(frame: &mut Frame, area: Rect, status: &CurrentPeriodSpend) {
+    let line = match status {
+        CurrentPeriodSpend::Computed { total, band } => Line::from(vec![
+            Span::raw("Credit card spend: "),
+            Span::styled(
+                format!("${total:.2} this period"),
+                Style::default()
+                    .fg(threshold_band_color(*band))
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::raw("  "),
+            Span::styled(
+                band.label(),
+                Style::default()
+                    .fg(threshold_band_color(*band))
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::raw("  (press 'c' for chart)"),
+        ]),
+        CurrentPeriodSpend::NoLiabilityAccountData => Line::from(Span::raw(
+            "Credit card spend: no liability account data this run",
         )),
     };
 
@@ -465,7 +517,7 @@ fn record_to_list_item(record: &AccountRecord) -> ListItem<'static> {
 
 fn draw_footer(frame: &mut Frame, area: Rect) {
     frame.render_widget(
-        Paragraph::new("s: manage sources   r: checklist   (any other key): quit"),
+        Paragraph::new("s: manage sources   r: checklist   c: spend chart   (any other key): quit"),
         area,
     );
 }

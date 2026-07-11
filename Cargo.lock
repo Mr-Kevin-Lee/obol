@@ -1482,6 +1482,7 @@ dependencies = [
  "ratatui",
  "secrecy",
  "serde_json",
+ "time",
  "tokio",
  "tracing-subscriber",
 ]

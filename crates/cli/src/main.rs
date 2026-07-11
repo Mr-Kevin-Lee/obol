@@ -1,6 +1,7 @@
 mod dashboard;
 mod form;
 mod mode;
+mod monthly_spend_screen;
 mod recommendations_screen;
 mod sources_screen;
 
@@ -279,6 +280,7 @@ enum Screen {
     Dashboard,
     Sources,
     Recommendations,
+    MonthlySpendChart,
 }
 
 /// Bounces between the Dashboard and Sources screens on their `s`/`v`
@@ -319,6 +321,18 @@ async fn run_screen_loop(
                     std::process::exit(1);
                 }
             },
+            Screen::MonthlySpendChart => {
+                match monthly_spend_screen::run(rules_path, snapshots_dir) {
+                    Ok(monthly_spend_screen::MonthlySpendAction::Quit) => return,
+                    Ok(monthly_spend_screen::MonthlySpendAction::GoToDashboard) => {
+                        Screen::Dashboard
+                    }
+                    Err(err) => {
+                        eprintln!("monthly spend chart screen failed: {err}");
+                        std::process::exit(1);
+                    }
+                }
+            }
             Screen::Dashboard => {
                 let sources = match obol_core::load_or_init(sources_path) {
                     Ok(sources) => sources,
@@ -364,16 +378,29 @@ async fn run_screen_loop(
                         );
                         obol_core::ChecklistStatuses::default()
                     });
+                let monthly_spend_thresholds =
+                    obol_core::load_or_init_monthly_spend_thresholds(rules_path).unwrap_or_else(
+                        |err| {
+                            eprintln!(
+                                "warning: rules.yaml could not be read ({err}) — using defaults"
+                            );
+                            obol_core::MonthlySpendThresholds::default()
+                        },
+                    );
 
                 match dashboard::run(
                     &result.snapshot,
                     previous.as_ref(),
                     &emergency_fund_thresholds,
                     &checklist_statuses,
+                    &monthly_spend_thresholds,
                 ) {
                     Ok(dashboard::DashboardAction::Quit) => return,
                     Ok(dashboard::DashboardAction::GoToSources) => Screen::Sources,
                     Ok(dashboard::DashboardAction::GoToRecommendations) => Screen::Recommendations,
+                    Ok(dashboard::DashboardAction::GoToMonthlySpendChart) => {
+                        Screen::MonthlySpendChart
+                    }
                     Err(err) => {
                         eprintln!("dashboard rendering failed: {err}");
                         std::process::exit(1);

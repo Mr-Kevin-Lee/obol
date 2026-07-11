@@ -10,6 +10,8 @@ mod item_usage_storage;
 mod keychain;
 mod lock;
 mod migration;
+mod monthly_spend;
+mod monthly_spend_storage;
 mod networth;
 mod pii;
 mod plaid;
@@ -23,6 +25,7 @@ mod sources;
 mod statement_import;
 mod statement_import_storage;
 mod storage;
+mod threshold_band;
 
 pub use account::{Account, AccountStatus, Asset, Holding, Liability};
 pub use checklist::{
@@ -32,7 +35,6 @@ pub use checklist::{
 pub use checklist_storage::{load_or_init_checklist_statuses, set_checklist_item_status};
 pub use emergency_fund::{
     band_for, calculate_emergency_fund_status, EmergencyFundStatus, EmergencyFundThresholds,
-    ThresholdBand,
 };
 pub use emergency_fund_storage::{
     load_or_init_emergency_fund_thresholds, save_emergency_fund_thresholds,
@@ -47,6 +49,13 @@ pub use keychain::{
 };
 pub use lock::{acquire_with_timeout, FileLock, LockError};
 pub use migration::{load_snapshot_json, LoadedSnapshot, MigrationError, CURRENT_SCHEMA_VERSION};
+pub use monthly_spend::{
+    band_for_spend, calculate_current_period_spend, extract_spend_series, CurrentPeriodSpend,
+    MonthlySpendThresholds, SpendPoint, HISTORY_LIMIT,
+};
+pub use monthly_spend_storage::{
+    load_or_init_monthly_spend_thresholds, save_monthly_spend_thresholds,
+};
 pub use networth::{calculate_net_worth, calculate_net_worth_from_records, NetWorth};
 pub use pii::{scrub, RawAccountData};
 pub use plaid::{
@@ -72,3 +81,4 @@ pub use statement_import_storage::{
     load_or_init_processed_files, save_processed_files, ProcessedFilesStorageError,
 };
 pub use storage::{load_recent_snapshots, load_snapshot, save_snapshot, StorageError};
+pub use threshold_band::ThresholdBand;

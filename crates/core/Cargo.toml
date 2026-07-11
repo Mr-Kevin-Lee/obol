@@ -18,7 +18,7 @@ serde-saphyr = "0.0"
 rand = "0.10"
 base64 = "0.22"
 fd-lock = "4"
-time = { version = "0.3", features = ["std", "formatting"] }
+time = { version = "0.3", features = ["std", "formatting", "parsing"] }
 tracing = "0.1"
 pdf-extract = "0.12"
 

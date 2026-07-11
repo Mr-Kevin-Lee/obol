@@ -1177,11 +1177,52 @@ all at once:
    each advisor meeting, but still worth having in one place rather than
    back in the PDF.
 
+### 13.4 Credit card spend trend (D39)
+
+A fifth, distinct kind of recommendation content, deliberately not
+force-fit into §13.1's Type A–D taxonomy — that taxonomy classifies by
+*value source* (where the number comes from); this is the first one
+that's fundamentally a **charted history**, not a single current value
+plus a band. Charts the total balance of `Category::Liability` accounts
+(today: Chase credit card + Apple Card) across recent snapshots, as a
+proxy for "monthly spend," under the explicit assumption that these
+cards are paid off each billing cycle so the statement balance roughly
+equals that period's spend. Red/yellow thresholds ($11,000 / $8,000,
+user-given, editable via `rules.yaml` like every other threshold in
+this section) mark the same three-color band used elsewhere, just with
+an inverted "higher is worse" comparison direction.
+
+**Not to be confused with Type B's "target monthly spend" glidepath**
+(§13.1) — that's a different, still-unbuilt concept (a moving target/
+floor/ceiling model for a spending goal), whereas this is a fixed-band
+chart over an already-available liability-balance proxy.
+
+**Explicitly narrower than D38's parked scope, not a reopening of it**:
+this needs no transaction-level parsing at all — it's a time series
+over the same per-run balance figures already extracted for every
+other purpose in this app. The paid-off-each-cycle assumption is a
+real, stated limitation: a card carrying a revolving balance would
+overstate or understate actual period spend.
+
+**History reflects recent runs, not calendar months** — the chart
+plots the last 18 snapshots (`HISTORY_LIMIT`), and since obol has no
+scheduled/biweekly runs yet (that's a v0.4 stretch item, §16), points
+aren't evenly spaced in time. The x-axis uses each snapshot's real
+timestamp rather than a simplified index specifically so this unevenness
+stays visible rather than being visually implied away.
+
+**Panel + dedicated screen, same split as D36/D37**: the Dashboard
+gets an always-visible one-line summary (current period's total +
+band, mirroring the emergency-fund panel exactly); the actual chart
+lives on its own screen (`'c'`), since a chart needs real space to be
+legible and the Dashboard is already dense.
+
 ## 14. Dashboard UI
 
-Three screens: the **net worth dashboard** (default view), a **Sources**
-screen for managing connections (§10.1), and a **Recommendations** screen
-for financial health tracking (§13).
+Four screens: the **net worth dashboard** (default view), a **Sources**
+screen for managing connections (§10.1), a **Recommendations** screen
+for financial health tracking (§13), and a **credit card spend trend
+chart** screen (§13.4, D39).
 
 **Dashboard:**
 - One panel per source, each independently rendered — a failed source shows a
@@ -1225,7 +1266,23 @@ for financial health tracking (§13).
 - Add / Edit / Remove / adjust-thresholds actions, mirroring the Sources
   screen's UI pattern (§10.1) — generated forms per recommendation type
   rather than hand-edited YAML, consistent with FR26's editability
-  requirement.
+  requirement. **As actually built for v0.5b (D37), this is currently
+  narrower**: a fixed, hardcoded 7-item checklist, `Space` cycles a
+  selected item's tri-state status directly (no add/edit/remove flow,
+  no generated forms) — the general add/edit/remove/adjust-thresholds
+  UI described above applies once Types B/C add real user-managed
+  entries, not yet.
+
+**Credit card spend trend screen (§13.4, D39):**
+- A line chart of `Category::Liability` account totals across recent
+  snapshots (`HISTORY_LIMIT` = 18), with flat reference lines at the
+  configured yellow/red thresholds.
+- A status line above the chart states the most recent period's total
+  and band in text, same colorblind-safe convention as the rest of the
+  app.
+- Read-only — thresholds are edited by hand in `rules.yaml`, same as
+  every other threshold in §13 today (no in-TUI threshold-editing UI
+  exists yet for any recommendation type).
 
 ## 15. Tech stack (Rust — security-first, decision D6)
 
@@ -2060,3 +2117,46 @@ Previously open questions, now resolved:
   help from anywhere — the harder of the two by a wide margin. Any
   future work here should be scoped as its own project phase, not
   folded into the recommendation-tracking work D35–D37 cover.
+- **D39 — Credit card spend trend chart (§13.4, Phase R): a narrower,
+  cheaper proxy than D38's parked scope, not a reopening of it**:
+  charts `Category::Liability` account totals (Chase credit card +
+  Apple Card today) across recent snapshots as a "monthly spend" proxy,
+  under the explicit assumption these cards are paid off each cycle —
+  needs no transaction-level parsing at all, just a time series over
+  balance figures already extracted every run. **(a)** `ThresholdBand`
+  (previously living solely inside `emergency_fund.rs`) is extracted to
+  its own `threshold_band.rs` — this feature's `band_for_spend` needs
+  an inverted "higher is worse" comparison direction from
+  `emergency_fund::band_for`'s "lower is worse," so the shared enum no
+  longer belongs to either domain module specifically; a ~15-line,
+  behavior-preserving move, same "generalize once a second real
+  consumer exists" precedent as D37's `rules_storage.rs` extraction.
+  **(b)** `HISTORY_LIMIT = 18` snapshots — obol has no scheduled runs
+  until v0.4 (§16), so this reflects "recent runs," not calendar
+  months; the chart's x-axis uses each snapshot's real timestamp rather
+  than a simplified index specifically so that unevenness stays
+  visible instead of being visually implied away. **(c)** Same panel +
+  dedicated screen split as D36/D37: an always-visible Dashboard
+  summary line (current period total + band, mirroring the
+  emergency-fund panel exactly) plus a dedicated `'c'` screen for the
+  chart itself — a chart needs real space to be legible, unlike a
+  single status line. **(d)** `CurrentPeriodSpend` mirrors
+  `EmergencyFundStatus`'s shape (`Computed { total, band }` /
+  `NoLiabilityAccountData`) — the same "never a bare misleading number"
+  instinct D36 already established, applied only to the single
+  current-period figure; the historical series itself stays a plain
+  `f64` per point, which reads fine in a multi-point chart. **(e)**
+  `time`'s `"parsing"` feature was added to `crates/core/Cargo.toml`
+  (previously only `"std"`/`"formatting"` — nothing before this parsed
+  an RFC3339 string back into a real timestamp) to support
+  `OffsetDateTime::parse` on each snapshot's `created_at`; `crates/cli`
+  gained `time` as a new direct dependency (`"std"` only, no
+  `"formatting"`/`"macros"`) since it needs to name
+  `time::OffsetDateTime`'s type directly (it appears in
+  `SpendPoint.timestamp`, a public field on a type re-exported from
+  `obol-core`) and formats dates via plain `Month`/`day()` field access
+  rather than the `format_description!` macro system, avoiding two
+  extra feature flags for one simple `MM/DD` label. This is ratatui's
+  first real use of its `Chart`/`Dataset`/`Axis`/`GraphType` widgets —
+  everything built before this rendered as plain text, manual Unicode
+  bars, or lists.
