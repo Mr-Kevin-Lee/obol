@@ -691,3 +691,15 @@ in this codebase.
     `'c'` opens the chart with yellow/red reference lines visible at
     the configured thresholds; the chart screen's status line and the
     Dashboard summary agree; `'v'` returns to Dashboard correctly).
+
+## Phase S — Checklist expansion (D40)
+
+88. `crates/core/src/checklist.rs` — 4 new `CHECKLIST_ITEMS` entries
+    (beneficiary designations, trust funding, umbrella insurance, POA/
+    healthcare directives accessible), drawn from general financial-
+    planning best practices, not this user's specific plan. Purely
+    additive to Type D's existing tri-state model (D37) — no new
+    architecture. Updated the two tests hardcoding the item count
+    (7 → 11) and the corresponding N/A-exclusion count (6 → 10
+    applicable). `docs/spec.md` D40 decision record + this Phase S
+    entry; verify build/tests, commit.

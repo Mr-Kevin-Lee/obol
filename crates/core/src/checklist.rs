@@ -44,6 +44,22 @@ pub const CHECKLIST_ITEMS: &[ChecklistItem] = &[
         id: "espp_participation",
         description: "ESPP participation / immediate-sale discipline",
     },
+    ChecklistItem {
+        id: "beneficiary_designations",
+        description: "Beneficiary designations current (retirement accounts + life insurance)",
+    },
+    ChecklistItem {
+        id: "trust_funding",
+        description: "Trust funding confirmed (assets actually titled into the Revocable Living Trust, not just signed)",
+    },
+    ChecklistItem {
+        id: "umbrella_insurance",
+        description: "Umbrella liability coverage in place",
+    },
+    ChecklistItem {
+        id: "poa_accessible",
+        description: "Power of attorney / healthcare directives accessible (not just filed away)",
+    },
 ];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -126,8 +142,8 @@ mod tests {
     use super::*;
 
     #[test]
-    fn checklist_items_const_has_exactly_seven_items() {
-        assert_eq!(CHECKLIST_ITEMS.len(), 7);
+    fn checklist_items_const_has_exactly_eleven_items() {
+        assert_eq!(CHECKLIST_ITEMS.len(), 11);
     }
 
     #[test]
@@ -202,14 +218,14 @@ mod tests {
             ChecklistItemStatus::NotApplicable,
         );
         let (_, applicable) = completion_summary(&statuses);
-        // 7 items total, 1 marked N/A -> 6 applicable.
-        assert_eq!(applicable, 6);
+        // 11 items total, 1 marked N/A -> 10 applicable.
+        assert_eq!(applicable, 10);
     }
 
     #[test]
-    fn completion_summary_with_empty_statuses_reports_zero_of_seven_complete() {
+    fn completion_summary_with_empty_statuses_reports_zero_of_eleven_complete() {
         let statuses = ChecklistStatuses::new();
-        assert_eq!(completion_summary(&statuses), (0, 7));
+        assert_eq!(completion_summary(&statuses), (0, 11));
     }
 
     #[test]

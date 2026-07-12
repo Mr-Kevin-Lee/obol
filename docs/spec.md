@@ -2160,3 +2160,20 @@ Previously open questions, now resolved:
   first real use of its `Chart`/`Dataset`/`Axis`/`GraphType` widgets —
   everything built before this rendered as plain text, manual Unicode
   bars, or lists.
+- **D40 — Four more checklist items, drawn from general financial-
+  planning best practices, not this user's specific plan** (§13.1
+  Type D): beneficiary designations current, trust funding confirmed,
+  umbrella liability coverage, and POA/healthcare directives
+  accessible. Brings `CHECKLIST_ITEMS` to 11. Purely additive — no new
+  architecture, since Type D's tri-state model (D37) already handles
+  an arbitrary fixed list. Part of a broader review of standard
+  fiduciary/CFP-style planning categories (cash flow, risk management,
+  investments, tax, retirement, estate) the user asked for in general
+  terms; most of that list was triaged and explicitly **not** built
+  here — several need data Obol has no source for (fund expense
+  ratios, cost-basis/lot data, per-account tax treatment), and a few
+  (withdrawal-rate sustainability, Social Security claiming strategy)
+  edge into actuarial/planning judgment calls this app shouldn't
+  automate even in generic form. The one item from that review that
+  *is* being built is high-interest debt payoff prioritization — see
+  the next decision.
