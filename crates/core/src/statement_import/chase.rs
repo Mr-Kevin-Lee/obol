@@ -91,6 +91,7 @@ impl StatementParser for ChaseStatementParser {
                     account_identifier: account.last4.clone(),
                     category: detect_category(text),
                     holdings: vec![],
+                    apr: extract_purchases_apr(text),
                 })
             }
             _ => Err(ParseError::AmbiguousMatch),
@@ -211,6 +212,44 @@ fn extract_statement_date(text: &str) -> Option<String> {
         .take_while(|c| c.is_ascii_digit() || *c == '/')
         .collect();
     (!raw.is_empty()).then_some(raw)
+}
+
+/// The credit-card layout's interest rate (spec D42) — verified against
+/// a real Chase Sapphire Reserve statement's `"INTEREST CHARGES"`
+/// section, which lists a *separate* rate per balance type (`PURCHASES`,
+/// `CASH ADVANCES`, `BALANCE TRANSFERS / MY CHASE LOAN`), each formatted
+/// like `"19.49%(v)(d)"`. Only the `PURCHASES` row's rate is extracted —
+/// that's the rate that applies to an ordinary carried/revolving
+/// balance; cash-advance and balance-transfer rates are edge cases, and
+/// "My Chase Loan" is a separate installment product, not a revolving
+/// balance. Finding `"PURCHASES"` *within* the `"INTEREST CHARGES"`
+/// section first (rather than just taking the first `%` after `"INTEREST
+/// CHARGES"`) is what correctly skips past `"CASH ADVANCES"`' rate,
+/// which appears later in the same real table. Checking/savings
+/// statements have no such section at all, so this returns `None` for
+/// them — a missing rate never blocks a valid balance, same as every
+/// other optional field in this module.
+fn extract_purchases_apr(text: &str) -> Option<f64> {
+    const SECTION_MARKER: &str = "INTEREST CHARGES";
+    let section_start = text.find(SECTION_MARKER)?;
+    extract_percentage_after(&text[section_start..], "PURCHASES", 300)
+}
+
+/// Finds `marker`, then the first ASCII digit within `window` characters
+/// after it, and parses the digit/decimal-point run starting there as a
+/// percentage. Works whether the digits are immediately followed by `%`
+/// (`"19.49%"`) or not — the run itself never includes `%` or
+/// whitespace either way.
+fn extract_percentage_after(text: &str, marker: &str, window: usize) -> Option<f64> {
+    let start = text.find(marker)? + marker.len();
+    let end = (start + window).min(text.len());
+    let slice = &text[start..end];
+    let digit_start = slice.find(|c: char| c.is_ascii_digit())?;
+    let number: String = slice[digit_start..]
+        .chars()
+        .take_while(|c| c.is_ascii_digit() || *c == '.')
+        .collect();
+    number.parse().ok()
 }
 
 /// Chase is the only institution this app supports (spec FR1) with both
@@ -433,5 +472,34 @@ mod tests {
 
         assert_eq!(result.balance, 250.00);
         assert_eq!(result.account_identifier, "7890");
+    }
+
+    #[test]
+    fn extracts_the_purchases_apr_not_cash_advances_or_balance_transfers() {
+        // Real Chase Sapphire Reserve structure: separate rates per
+        // balance type, Purchases listed before Cash Advances — proves
+        // the two-step "INTEREST CHARGES" then "PURCHASES" search picks
+        // the right row, not just the first "%" found in the section.
+        let text = "CHASE\nAccount Number:  XXXX XXXX XXXX 4321\n\
+                     New Balance $567.89\n\
+                     INTEREST CHARGES\n\
+                     Your Annual Percentage Rate (APR) is the annual interest rate on your account.\n\
+                     PURCHASES\n  Purchases                    19.49%(v)(d)         -0-    -0-\n\
+                     CASH ADVANCES\n  Cash Advances                28.49%(v)(d)         -0-    -0-\n";
+
+        let result = ChaseStatementParser.parse(text, &expected(None)).unwrap();
+
+        assert_eq!(result.apr, Some(19.49));
+    }
+
+    #[test]
+    fn a_checking_statement_with_no_interest_charges_section_has_no_apr() {
+        let text = "CHASE\nChase Checking Statement\nAccount ending in 6789\n\
+                     Statement Date: 06/30/2026\nNew Balance $1,234.56\n";
+
+        let result = ChaseStatementParser.parse(text, &expected(None)).unwrap();
+
+        assert_eq!(result.apr, None);
+        assert_eq!(result.balance, 1234.56);
     }
 }

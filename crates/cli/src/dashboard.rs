@@ -20,8 +20,9 @@ use ratatui::Frame;
 use ratatui::Terminal;
 
 use obol_core::{
-    calculate_current_period_spend, completion_summary, status_for, AccountRecord, AssetClass,
-    Category, ChecklistItemStatus, ChecklistStatuses, CurrentPeriodSpend, EmergencyFundStatus,
+    calculate_current_period_spend, completion_summary, evaluate_debt_payoff_priority, status_for,
+    AccountRecord, AssetClass, Category, ChecklistItemStatus, ChecklistStatuses,
+    CurrentPeriodSpend, DebtPayoffConfig, DebtPayoffStatus, EmergencyFundStatus,
     EmergencyFundThresholds, Holding, MonthlySpendThresholds, NetWorth, Snapshot, Status,
     ThresholdBand, CHECKLIST_ITEMS,
 };
@@ -72,12 +73,18 @@ pub enum DashboardAction {
 ///
 /// `monthly_spend_thresholds` (spec §13.4, D39) — same reload-per-entry
 /// treatment.
+///
+/// `debt_payoff_config` (spec §13.1, D41) — same reload-per-entry
+/// treatment. Read-only here; there's no in-TUI editing for this
+/// section (or any recommendation threshold today) — rates are
+/// hand-entered in `rules.yaml`.
 pub fn run(
     snapshot: &Snapshot,
     previous: Option<&Snapshot>,
     emergency_fund_thresholds: &EmergencyFundThresholds,
     checklist_statuses: &ChecklistStatuses,
     monthly_spend_thresholds: &MonthlySpendThresholds,
+    debt_payoff_config: &DebtPayoffConfig,
 ) -> io::Result<DashboardAction> {
     enable_raw_mode()?;
     io::stdout().execute(EnterAlternateScreen)?;
@@ -91,6 +98,7 @@ pub fn run(
             emergency_fund_thresholds,
             checklist_statuses,
             monthly_spend_thresholds,
+            debt_payoff_config,
         )
     })?;
     let action = loop {
@@ -120,6 +128,7 @@ fn draw(
     emergency_fund_thresholds: &EmergencyFundThresholds,
     checklist_statuses: &ChecklistStatuses,
     monthly_spend_thresholds: &MonthlySpendThresholds,
+    debt_payoff_config: &DebtPayoffConfig,
 ) {
     // Spec D31: pooled across every holdings-bearing account in this
     // snapshot (today, at most one — Vanguard Brokerage), not just the
@@ -138,6 +147,11 @@ fn draw(
         obol_core::calculate_emergency_fund_status(&snapshot.accounts, emergency_fund_thresholds);
     let monthly_spend_status =
         calculate_current_period_spend(&snapshot.accounts, monthly_spend_thresholds);
+    let debt_payoff_status = evaluate_debt_payoff_priority(&snapshot.accounts, debt_payoff_config);
+    let debt_payoff_lines = match &debt_payoff_status {
+        DebtPayoffStatus::Flagged(debts) => debts.len() as u16,
+        DebtPayoffStatus::NoHighInterestDebt | DebtPayoffStatus::NoRatesConfigured => 1,
+    };
 
     let mut constraints = vec![
         Constraint::Length(3), // title
@@ -150,6 +164,11 @@ fn draw(
         Constraint::Length(3), // emergency fund coverage
         // Spec §13.4, D39: same always-rendered instinct.
         Constraint::Length(3), // credit card spend trend summary
+        // Spec §13.1, D41: same always-rendered instinct, dynamic
+        // height since the number of flagged debts varies (+2 for the
+        // panel's own border/title lines, same shape as the holdings-
+        // breakdown/checklist panels).
+        Constraint::Length(debt_payoff_lines + 2), // debt payoff priority
         // Spec §13.1 Type D, D37: same always-rendered instinct as
         // emergency fund coverage above — the full 7-item list, not
         // just a count, so the current state is visible without
@@ -175,9 +194,10 @@ fn draw(
     draw_net_worth(frame, areas[1], snapshot, previous);
     draw_emergency_fund_coverage(frame, areas[2], &emergency_fund_status);
     draw_monthly_spend_summary(frame, areas[3], &monthly_spend_status);
-    draw_checklist(frame, areas[4], checklist_statuses);
+    draw_debt_payoff_priority(frame, areas[4], &debt_payoff_status);
+    draw_checklist(frame, areas[5], checklist_statuses);
 
-    let mut next = 5;
+    let mut next = 6;
     if !buckets.is_empty() {
         draw_holdings_breakdown(frame, areas[next], &buckets);
         next += 1;
@@ -349,6 +369,45 @@ fn draw_monthly_spend_summary(frame: &mut Frame, area: Rect, status: &CurrentPer
 
     frame.render_widget(
         Paragraph::new(line).block(Block::default().borders(Borders::ALL)),
+        area,
+    );
+}
+
+/// High-interest debt payoff priority (spec §13.1, D41) — a generic
+/// financial-planning best practice, not personalized to any specific
+/// plan. Always rendered, dynamic height (see `draw`'s
+/// `debt_payoff_lines` computation). Deliberately doesn't reuse
+/// `ThresholdBand`/`threshold_band_color` — this is a binary flag, not
+/// a three-color gradient, so `VERMILLION` alone (paired with the "at
+/// X% APR" text, never color alone per FR27) is the right signal here.
+fn draw_debt_payoff_priority(frame: &mut Frame, area: Rect, status: &DebtPayoffStatus) {
+    let lines: Vec<Line> = match status {
+        DebtPayoffStatus::Flagged(debts) => debts
+            .iter()
+            .map(|debt| {
+                Line::from(Span::styled(
+                    format!(
+                        "{} ({})  ${:.2} at {:.2}% APR",
+                        debt.institution, debt.account_type, debt.balance, debt.interest_rate
+                    ),
+                    Style::default().fg(VERMILLION).add_modifier(Modifier::BOLD),
+                ))
+            })
+            .collect(),
+        DebtPayoffStatus::NoHighInterestDebt => vec![Line::from(Span::raw(
+            "No liability account is above the configured high-interest threshold",
+        ))],
+        DebtPayoffStatus::NoRatesConfigured => vec![Line::from(Span::raw(
+            "No interest rates configured — add them under debt_payoff.interest_rates in rules.yaml",
+        ))],
+    };
+
+    frame.render_widget(
+        Paragraph::new(lines).block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title("Debt Payoff Priority"),
+        ),
         area,
     );
 }

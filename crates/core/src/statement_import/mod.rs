@@ -42,6 +42,7 @@ use std::time::SystemTime;
 use async_trait::async_trait;
 use sha2::{Digest, Sha256};
 
+use crate::debt_payoff_storage::save_debt_payoff_interest_rate;
 use crate::pii::hash_account_number;
 use crate::statement_import_storage::{load_or_init_processed_files, save_processed_files};
 use crate::{Account, AccountStatus, Asset, Category, Credentials, Liability};
@@ -70,13 +71,30 @@ pub struct StatementImportProvider {
     /// read-modify-write cycle; PDF parsing and every other source's
     /// unrelated work still runs fully concurrently.
     ledger_lock: tokio::sync::Mutex<()>,
+    /// `rules.yaml` path, used to auto-persist a parsed interest rate
+    /// (spec D42). A separate `PathBuf` from `ledger_path` — a wholly
+    /// different file with a different owner (`rules_storage.rs`), not
+    /// something to bundle into the ledger's own storage.
+    rules_path: PathBuf,
+    /// Guards `rules.yaml`'s read-modify-write cycle, same race this
+    /// module's `ledger_lock` already guards for `processed_files.json`
+    /// — every `statement_import` source shares this one provider
+    /// instance and is fetched concurrently. **Deliberately a separate
+    /// lock from `ledger_lock`**, not a shared one: they guard two
+    /// unrelated files, and holding one lock across both would
+    /// serialize sources that have no actual data dependency on each
+    /// other, working against the "unrelated work stays concurrent"
+    /// principle `ledger_lock` itself already established.
+    rules_lock: tokio::sync::Mutex<()>,
 }
 
 impl StatementImportProvider {
-    pub fn new(ledger_path: PathBuf) -> Self {
+    pub fn new(ledger_path: PathBuf, rules_path: PathBuf) -> Self {
         Self {
             ledger_path,
             ledger_lock: tokio::sync::Mutex::new(()),
+            rules_path,
+            rules_lock: tokio::sync::Mutex::new(()),
         }
     }
 }
@@ -182,6 +200,31 @@ impl Provider for StatementImportProvider {
                 // or because this particular statement happened to have
                 // none — the dashboard treats both the same either way.
                 let holdings = (!parsed.holdings.is_empty()).then_some(parsed.holdings);
+
+                // Spec D42: auto-persist a parsed interest rate into
+                // rules.yaml's debt_payoff.interest_rates — only for
+                // liability accounts (matches
+                // evaluate_debt_payoff_priority's own filter; an
+                // asset-side statement should never populate this map)
+                // and only here in the fresh-parse branch, never the
+                // ledger-fallback "nothing new" branch below (same
+                // fresh-parse-only precedent D31 established for
+                // holdings). Best-effort: a write failure never fails
+                // this fetch — it degrades one recommendation panel,
+                // not the account balance this call exists to report.
+                if source.category == Category::Liability {
+                    if let Some(rate) = parsed.apr {
+                        let _rules_guard = self.rules_lock.lock().await;
+                        if let Err(err) =
+                            save_debt_payoff_interest_rate(&self.rules_path, &source.id, rate)
+                        {
+                            tracing::warn!(
+                                "could not save parsed interest rate for {}: {err}",
+                                source.id
+                            );
+                        }
+                    }
+                }
 
                 (parsed.balance, parsed.as_of_date, parsed.account_identifier, holdings)
             }
@@ -341,6 +384,10 @@ mod tests {
         dir.join("processed_statements.json")
     }
 
+    fn rules_path(dir: &Path) -> PathBuf {
+        dir.join("rules.yaml")
+    }
+
     fn fixture_bytes() -> Vec<u8> {
         fs::read(
             PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -370,7 +417,7 @@ mod tests {
         let dir = temp_dir("first-run");
         fs::write(dir.join("statement.pdf"), fixture_bytes()).unwrap();
 
-        let provider = StatementImportProvider::new(ledger_path(&dir));
+        let provider = StatementImportProvider::new(ledger_path(&dir), rules_path(&dir));
         let accounts = provider.fetch(&source(&dir, None), None).await.unwrap();
 
         assert_eq!(accounts.len(), 1);
@@ -389,7 +436,7 @@ mod tests {
         let dir = temp_dir("no-holdings-parser");
         fs::write(dir.join("statement.pdf"), fixture_bytes()).unwrap();
 
-        let provider = StatementImportProvider::new(ledger_path(&dir));
+        let provider = StatementImportProvider::new(ledger_path(&dir), rules_path(&dir));
         let accounts = provider.fetch(&source(&dir, None), None).await.unwrap();
 
         assert_eq!(accounts[0].holdings(), None);
@@ -406,7 +453,7 @@ mod tests {
         let dir = temp_dir("no-holdings-fallback");
         fs::write(dir.join("statement.pdf"), fixture_bytes()).unwrap();
 
-        let provider = StatementImportProvider::new(ledger_path(&dir));
+        let provider = StatementImportProvider::new(ledger_path(&dir), rules_path(&dir));
         let first = provider.fetch(&source(&dir, None), None).await.unwrap();
         let second = provider.fetch(&source(&dir, None), None).await.unwrap();
 
@@ -421,7 +468,7 @@ mod tests {
         let dir = temp_dir("no-new-file");
         fs::write(dir.join("statement.pdf"), fixture_bytes()).unwrap();
 
-        let provider = StatementImportProvider::new(ledger_path(&dir));
+        let provider = StatementImportProvider::new(ledger_path(&dir), rules_path(&dir));
         let first = provider.fetch(&source(&dir, None), None).await.unwrap();
         let second = provider.fetch(&source(&dir, None), None).await.unwrap();
 
@@ -436,7 +483,7 @@ mod tests {
     #[tokio::test]
     async fn missing_watch_dir_config_is_a_provider_error() {
         let dir = temp_dir("missing-config");
-        let provider = StatementImportProvider::new(ledger_path(&dir));
+        let provider = StatementImportProvider::new(ledger_path(&dir), rules_path(&dir));
         let mut bad_source = source(&dir, None);
         bad_source.provider_config = json!({});
 
@@ -449,7 +496,7 @@ mod tests {
     #[tokio::test]
     async fn nonexistent_watch_dir_is_a_provider_error() {
         let dir = temp_dir("nonexistent");
-        let provider = StatementImportProvider::new(ledger_path(&dir));
+        let provider = StatementImportProvider::new(ledger_path(&dir), rules_path(&dir));
         let missing_dir = dir.join("does-not-exist");
 
         let err = provider
@@ -466,7 +513,7 @@ mod tests {
         let dir = temp_dir("unknown-institution");
         fs::write(dir.join("statement.pdf"), fixture_bytes()).unwrap();
 
-        let provider = StatementImportProvider::new(ledger_path(&dir));
+        let provider = StatementImportProvider::new(ledger_path(&dir), rules_path(&dir));
         let mut bad_source = source(&dir, None);
         bad_source.institution = "SomeBankNobodyHasWrittenAParserFor".into();
 
@@ -479,7 +526,7 @@ mod tests {
     #[tokio::test]
     async fn empty_watch_dir_with_no_history_is_a_provider_error() {
         let dir = temp_dir("empty-no-history");
-        let provider = StatementImportProvider::new(ledger_path(&dir));
+        let provider = StatementImportProvider::new(ledger_path(&dir), rules_path(&dir));
 
         let err = provider.fetch(&source(&dir, None), None).await.unwrap_err();
         assert!(!err.is_transient());
@@ -492,7 +539,7 @@ mod tests {
         let dir = temp_dir("new-file-between-runs");
         fs::write(dir.join("statement.pdf"), fixture_bytes()).unwrap();
 
-        let provider = StatementImportProvider::new(ledger_path(&dir));
+        let provider = StatementImportProvider::new(ledger_path(&dir), rules_path(&dir));
         let first = provider.fetch(&source(&dir, None), None).await.unwrap();
         assert_eq!(first[0].balance(), Some(1234.56));
 
@@ -505,6 +552,51 @@ mod tests {
 
         let second = provider.fetch(&source(&dir, None), None).await.unwrap();
         assert_eq!(second[0].balance(), Some(1234.56));
+
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    // Spec D42: `fetch()` auto-persists a parsed interest rate into
+    // `rules.yaml`, gated on `Category::Liability` and only in the
+    // fresh-parse branch. The only checked-in PDF fixture
+    // (`chase_statement_sample.pdf`) is a checking-layout statement with
+    // no `INTEREST CHARGES` section, so `parsed.apr` is always `None`
+    // against it — these tests confirm the gate never spuriously writes
+    // (or panics) in that case, for both a liability- and an
+    // asset-category source. The positive "a real APR gets written"
+    // path is already covered directly: `chase.rs`/`apple_card.rs`
+    // prove extraction produces `Some(rate)` from real statement
+    // structure, and `debt_payoff_storage.rs` proves
+    // `save_debt_payoff_interest_rate` persists/overwrites correctly —
+    // wiring the two together against a *real* credit-card/Apple Card
+    // PDF is exercised by the manual end-to-end walkthrough instead,
+    // since no such binary fixture exists in this repo yet.
+    #[tokio::test]
+    async fn a_liability_source_whose_statement_has_no_apr_writes_nothing_to_rules_yaml() {
+        let dir = temp_dir("liability-no-apr");
+        fs::write(dir.join("statement.pdf"), fixture_bytes()).unwrap();
+
+        let provider = StatementImportProvider::new(ledger_path(&dir), rules_path(&dir));
+        let mut liability_source = source(&dir, None);
+        liability_source.category = Category::Liability;
+
+        provider.fetch(&liability_source, None).await.unwrap();
+
+        assert!(!rules_path(&dir).exists());
+
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[tokio::test]
+    async fn an_asset_source_never_writes_to_rules_yaml_even_if_it_somehow_had_an_apr() {
+        let dir = temp_dir("asset-no-apr-write");
+        fs::write(dir.join("statement.pdf"), fixture_bytes()).unwrap();
+
+        // Default `source()` category is Asset (checking).
+        let provider = StatementImportProvider::new(ledger_path(&dir), rules_path(&dir));
+        provider.fetch(&source(&dir, None), None).await.unwrap();
+
+        assert!(!rules_path(&dir).exists());
 
         fs::remove_dir_all(&dir).ok();
     }

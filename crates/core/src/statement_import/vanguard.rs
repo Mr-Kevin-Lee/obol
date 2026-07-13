@@ -97,6 +97,7 @@ impl StatementParser for VanguardStatementParser {
                     // always assets) — no statement inspection needed.
                     category: Category::Asset,
                     holdings: extract_holdings(text),
+                    apr: None,
                 })
             }
             _ => Err(ParseError::AmbiguousMatch),

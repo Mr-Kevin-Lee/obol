@@ -53,6 +53,15 @@ pub struct ParsedStatement {
     /// above — an empty vec is already the "no holdings" state, no
     /// extra `None` branch needed at any call site.
     pub holdings: Vec<Holding>,
+    /// The account's interest rate (spec D42), if this statement shows
+    /// one — a plain percentage number (`19.49` means 19.49% APR, not
+    /// `0.1949`), same unit convention as `DebtInterestRates` (D41).
+    /// `None` for every institution with no APR concept (Vanguard,
+    /// Fidelity, Morgan Stanley — asset-only, no revolving-balance
+    /// interest) and for any Chase layout without an `INTEREST
+    /// CHARGES` section (checking/savings) — a missing rate never
+    /// blocks a valid balance, same as every other optional field here.
+    pub apr: Option<f64>,
 }
 
 #[derive(Debug, PartialEq)]

@@ -65,19 +65,24 @@ fn maybe_register_plaid(
 /// Registers the statement-import provider (spec §6.3, D28) —
 /// unconditional, unlike `maybe_register_plaid`, since this provider
 /// reads local files rather than calling an external API and so has no
-/// credentials to gate on. Needs only a path for its processed-files
-/// ledger, which lives alongside `item_usage.json` under the storage
-/// directory.
+/// credentials to gate on. Needs a path for its processed-files ledger
+/// (lives alongside `item_usage.json` under the storage directory) and,
+/// as of D42, `rules.yaml`'s path too — a parsed statement's interest
+/// rate is auto-persisted there.
 fn register_statement_import(
     registry: &mut std::collections::HashMap<&'static str, obol_core::ProviderFactory>,
     processed_statements_path: &std::path::Path,
+    rules_path: &std::path::Path,
 ) {
     let ledger_path = processed_statements_path.to_path_buf();
+    let rules_path = rules_path.to_path_buf();
     registry.insert(
         "statement_import",
         Box::new(move || {
-            Box::new(obol_core::StatementImportProvider::new(ledger_path.clone()))
-                as Box<dyn obol_core::Provider>
+            Box::new(obol_core::StatementImportProvider::new(
+                ledger_path.clone(),
+                rules_path.clone(),
+            )) as Box<dyn obol_core::Provider>
         }),
     );
 }
@@ -352,7 +357,7 @@ async fn run_screen_loop(
 
                 let mut registry = obol_core::provider_registry();
                 maybe_register_plaid(&mut registry);
-                register_statement_import(&mut registry, processed_statements_path);
+                register_statement_import(&mut registry, processed_statements_path, rules_path);
                 let credential_source = NoInteractiveProvidersYet;
 
                 let result =
@@ -387,6 +392,13 @@ async fn run_screen_loop(
                             obol_core::MonthlySpendThresholds::default()
                         },
                     );
+                let debt_payoff_config = obol_core::load_or_init_debt_payoff_config(rules_path)
+                    .unwrap_or_else(|err| {
+                        eprintln!(
+                            "warning: rules.yaml could not be read ({err}) — using defaults"
+                        );
+                        obol_core::DebtPayoffConfig::default()
+                    });
 
                 match dashboard::run(
                     &result.snapshot,
@@ -394,6 +406,7 @@ async fn run_screen_loop(
                     &emergency_fund_thresholds,
                     &checklist_statuses,
                     &monthly_spend_thresholds,
+                    &debt_payoff_config,
                 ) {
                     Ok(dashboard::DashboardAction::Quit) => return,
                     Ok(dashboard::DashboardAction::GoToSources) => Screen::Sources,

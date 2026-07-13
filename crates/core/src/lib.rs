@@ -1,6 +1,8 @@
 mod account;
 mod checklist;
 mod checklist_storage;
+mod debt_payoff;
+mod debt_payoff_storage;
 mod emergency_fund;
 mod emergency_fund_storage;
 mod engine;
@@ -33,6 +35,13 @@ pub use checklist::{
     CHECKLIST_ITEMS,
 };
 pub use checklist_storage::{load_or_init_checklist_statuses, set_checklist_item_status};
+pub use debt_payoff::{
+    evaluate_debt_payoff_priority, DebtInterestRates, DebtPayoffConfig, DebtPayoffStatus,
+    FlaggedDebt,
+};
+pub use debt_payoff_storage::{
+    load_or_init_debt_payoff_config, save_debt_payoff_config, save_debt_payoff_interest_rate,
+};
 pub use emergency_fund::{
     band_for, calculate_emergency_fund_status, EmergencyFundStatus, EmergencyFundThresholds,
 };

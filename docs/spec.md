@@ -1217,6 +1217,54 @@ band, mirroring the emergency-fund panel exactly); the actual chart
 lives on its own screen (`'c'`), since a chart needs real space to be
 legible and the Dashboard is already dense.
 
+### 13.5 High-interest debt payoff priority (D41)
+
+A sixth kind of recommendation content, closer to Type A than Type B —
+Obol already has every `Category::Liability` account's balance from
+v0.1 onward (§13.1's Type A criterion); the only new input is one
+number per liability account, its interest rate, which Obol has no
+way to derive on its own (no aggregator this project uses exposes
+APR, §7). Flags any `Category::Liability`/`Status::Ok` account whose
+manually-entered rate meets or exceeds a configurable threshold
+(default 7%, the commonly-cited generic point where guaranteed debt
+payoff beats expected market return) — "pay down high-interest debt
+before investing further" is a standard, generic financial-planning
+best practice, not personalized to any specific plan (same framing as
+D40's checklist additions).
+
+**Rates are keyed by `source_id`, not `account_key`** — `source_id` is
+the stable, user-chosen id from `sources.yaml` (visible on the Sources
+screen), the only account identifier a person could plausibly
+hand-type into `rules.yaml`; `account_key` is a salted hash, same
+precedent as `ChecklistStatuses` keying by the stable `item.id` rather
+than anything derived. **Rates are a plain percentage number** (`24.99`
+means 24.99% APR, not `0.2499`) — matches how a person naturally
+writes an APR, documented explicitly on the type to avoid unit
+ambiguity.
+
+**Three-state status, mirroring `EmergencyFundStatus`'s "never a bare
+misleading state" shape**: `Flagged(Vec<FlaggedDebt>)` (sorted by rate
+descending — highest priority first) / `NoHighInterestDebt` (rates are
+configured, none meet the threshold) / `NoRatesConfigured` (the rates
+map is empty — a real, distinct "you haven't set this up yet" state,
+not the same as "checked and nothing's high").
+
+**No `ThresholdBand` reuse** — unlike the red/yellow/green gradients
+elsewhere in §13, this is fundamentally a binary flag (meets/exceeds
+the threshold, or doesn't), so forcing it into a three-color band would
+be a bad fit rather than a simplification, a deliberate non-reuse
+stated explicitly rather than silently diverging.
+
+**Dashboard panel only, no dedicated screen** — same reasoning as
+D36/D39: this is read-only, derived data with nothing to toggle, not
+an actual growing list to manage (unlike Type D's checklist, D37).
+
+**Addendum (D42)**: rates are no longer purely hand-entered. Chase and
+Apple Card statements both show the account's APR in plain text, so
+`StatementImportProvider` now extracts it automatically and writes it
+straight into `rules.yaml`'s `debt_payoff.interest_rates`, closing the
+manual-entry gap this section originally described — see D42.
+
 ## 14. Dashboard UI
 
 Four screens: the **net worth dashboard** (default view), a **Sources**
@@ -2177,3 +2225,89 @@ Previously open questions, now resolved:
   automate even in generic form. The one item from that review that
   *is* being built is high-interest debt payoff prioritization — see
   the next decision.
+- **D41 — High-interest debt payoff priority (§13.5, Phase T)**: the
+  one item from D40's best-practices review judged buildable now,
+  since it needs only one new manually-entered number (an interest
+  rate) layered onto data Obol already has (liability balances). Five
+  scope decisions, each following existing precedent rather than
+  introducing a new pattern: **(a)** rates keyed by `source_id` (the
+  stable, hand-typeable id from `sources.yaml`), not `account_key` (a
+  salted hash) — same precedent `ChecklistStatuses` already set keying
+  by `item.id`. **(b)** rates are a plain percentage number (`24.99`
+  for 24.99% APR), documented explicitly to avoid unit ambiguity — a
+  real bug class if left implicit. **(c)** bundled into one
+  `DebtPayoffConfig { high_interest_at_or_above, interest_rates }`,
+  one field on `RulesFile`, matching the existing
+  one-cohesive-struct-per-section precedent
+  (`EmergencyFundThresholds`, `ChecklistStatuses`,
+  `MonthlySpendThresholds`) rather than a generic
+  `Recommendation`/`ValueSource` type (§13.2's sketch stays deferred,
+  same reasoning as D36/D37). **(d)** deliberately does not reuse
+  `ThresholdBand` — this is a binary flag (meets/exceeds the
+  threshold), not a three-color gradient, so forcing that fit would be
+  wrong, not a simplification. **(e)** `DebtPayoffStatus` is
+  three-state (`Flagged(Vec<FlaggedDebt>)` / `NoHighInterestDebt` /
+  `NoRatesConfigured`), the same "never a bare misleading state"
+  instinct as `EmergencyFundStatus` and `CurrentPeriodSpend` —
+  `NoRatesConfigured` (the map is empty) is a real, distinct "you
+  haven't set this up yet" state, not conflated with "checked and
+  nothing's high." `Flagged` entries are sorted by rate descending.
+  Only `Category::Liability`/`Status::Ok` accounts are ever
+  considered — a stray rate entry for the wrong id, or an account
+  whose fetch failed this run, can't produce a false flag. **Dashboard
+  panel only, no dedicated screen** — same reasoning as D36/D39: this
+  is read-only, derived data with nothing to toggle, unlike Type D's
+  checklist (D37) which needed one. No new `Screen` variant, no new
+  keybinding. Rates remain hand-edited in `rules.yaml` — no in-TUI
+  editing UI exists yet for any recommendation type in this app.
+- **D42 — Auto-extracted APR from Chase/Apple Card statements (§13.5,
+  Phase U)**: surfaced live the same day D41 shipped — the user
+  hand-typed `chase_credit_card` into `rules.yaml`, but the real
+  `source_id` was `chase_sapphirereserve`, so nothing got flagged,
+  silently (no false positive, by design, but also no feedback that
+  the key was wrong). Real statements already show APR in plain text,
+  so `StatementImportProvider` now extracts it and writes it straight
+  into `debt_payoff.interest_rates`, closing the manual-entry step
+  (and this class of typo) the same way balance already works — a
+  user decision made explicitly (via `AskUserQuestion`) in favor of
+  auto-populating over merely surfacing the value for manual copying.
+  `ParsedStatement` gains `apr: Option<f64>` (percentage number, same
+  unit convention as `DebtInterestRates`), `None` for every
+  institution with no APR concept and for Chase layouts without an
+  `INTEREST CHARGES` section. **Chase's real statement structure
+  differs meaningfully from Apple Card's**: Chase shows a table of
+  *separate* rates per balance type (Purchases, Cash Advances, Balance
+  Transfers/My Chase Loan, each like `"19.49%(v)(d)"`) — only the
+  Purchases row is extracted, since that's the rate that applies to an
+  ordinary carried/revolving balance, found via a two-step marker
+  search (`INTEREST CHARGES` section, then `PURCHASES` within it) that
+  correctly skips past Cash Advances' rate later in the same table.
+  Apple Card shows one flat rate (`"Annual Percentage Rate (APR) 14.49
+  % (variable)"`, note the space before `%`, unlike Chase's adjacent
+  format). No shared parsing-utility module between the two — matches
+  this module's existing precedent of each parser file owning its own
+  near-identical small helpers rather than a premature shared
+  abstraction for two call sites. The write is **category-gated**
+  (`Category::Liability` only, matching `evaluate_debt_payoff_priority`'s
+  own filter) and **fresh-parse-only** (never the ledger-fallback
+  "nothing new" branch — same precedent D31 established for holdings),
+  **always overwrites** whatever's currently in `rules.yaml` for that
+  `source_id` including a prior manual entry (the statement is treated
+  as the source of truth, same stance already taken for balance), and
+  is **best-effort/non-blocking** — a write failure is logged via
+  `tracing::warn!` and never fails the fetch itself, mirroring §9.1's
+  "snapshot persistence is best-effort, not blocking." A second,
+  separate `tokio::sync::Mutex` (`rules_lock`, alongside the existing
+  `ledger_lock`) guards `rules.yaml`'s read-modify-write inside
+  `StatementImportProvider` — not reusing `ledger_lock`, since that
+  guards an unrelated file and sharing one lock across both would
+  serialize sources with no actual data dependency on each other.
+  **Testing note**: extraction correctness (chase.rs/apple_card.rs) and
+  storage correctness (debt_payoff_storage.rs) are both directly unit
+  tested; the full `fetch()`-level integration is only exercised
+  against the existing checking-layout PDF fixture (which has no APR,
+  proving the gate never spuriously writes) since no real
+  credit-card/Apple-Card binary PDF fixture exists in this repo yet —
+  the positive "a real statement's rate gets written" path is verified
+  by the manual end-to-end walkthrough against real statements instead
+  of an automated fixture-based test.

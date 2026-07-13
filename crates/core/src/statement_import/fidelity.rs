@@ -60,6 +60,7 @@ impl StatementParser for FidelityStatementParser {
                     // no statement inspection needed.
                     category: Category::Asset,
                     holdings: vec![],
+                    apr: None,
                 })
             }
             _ => Err(ParseError::AmbiguousMatch),

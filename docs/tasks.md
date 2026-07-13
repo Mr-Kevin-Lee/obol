@@ -703,3 +703,131 @@ in this codebase.
     (7 → 11) and the corresponding N/A-exclusion count (6 → 10
     applicable). `docs/spec.md` D40 decision record + this Phase S
     entry; verify build/tests, commit.
+
+## Phase T — High-interest debt payoff priority (D41)
+
+The one item from Phase S's best-practices review judged buildable now
+(§13.5): flags any `Category::Liability`/`Status::Ok` account whose
+manually-entered interest rate meets or exceeds a configurable
+threshold (default 7%). Closer to Type A than Type B — Obol already
+has every liability balance, the only new input is one rate per
+account. Deliberately does not reuse `ThresholdBand` (binary flag, not
+a gradient) and gets a Dashboard panel only, no dedicated screen (same
+reasoning as Phase P/D36).
+
+89. `crates/core/src/debt_payoff.rs` (new) — `DebtInterestRates`
+    (`BTreeMap<String, f64>`, keyed by `source_id`, percentage not
+    fraction), `DebtPayoffConfig` (`high_interest_at_or_above` default
+    7.0, `interest_rates` default empty), `FlaggedDebt`,
+    `DebtPayoffStatus` (`Flagged(Vec<FlaggedDebt>)` sorted by rate
+    descending / `NoHighInterestDebt` / `NoRatesConfigured`),
+    `evaluate_debt_payoff_priority()` — pure, mirrors
+    `emergency_fund.rs`'s shape. Test-first. Tests: default config
+    values; empty rates → `NoRatesConfigured`; below-threshold liability
+    not flagged; at/above-threshold liability flagged with correct
+    balance/rate; an asset account never flagged even with a configured
+    rate; an errored liability excluded even with a configured rate; a
+    liability with no configured rate not flagged; multiple flagged
+    debts sorted by rate descending; all-configured-rates-below-
+    threshold → `NoHighInterestDebt`; config serde round-trip.
+90. `crates/core/src/debt_payoff_storage.rs` (new) — thin wrapper over
+    `rules_storage.rs`, mirroring `monthly_spend_storage.rs` exactly,
+    test-first. Includes a cross-section regression test proving a
+    `debt_payoff` save doesn't disturb the existing `emergency_fund`/
+    `checklist` sections.
+91. `crates/core/src/rules_storage.rs` — `RulesFile` gains
+    `#[serde(default)] debt_payoff: DebtPayoffConfig`. Existing
+    round-trip test extended to cover all four sections.
+92. `lib.rs` re-exports for the new `debt_payoff`/`debt_payoff_storage`
+    modules.
+93. `crates/cli/src/dashboard.rs` wiring — `draw_debt_payoff_priority()`,
+    always-rendered panel with dynamic height (one line per flagged
+    debt, or a single informational line for the other two states),
+    computed on the live just-fetched snapshot. Flagged debts styled
+    `VERMILLION` (no new color — this is inherently a "this is bad, act
+    on it" signal, unlike the three-way threshold bands elsewhere).
+    `run()`/`draw()` gain a `debt_payoff_config: &DebtPayoffConfig`
+    parameter. No new `DashboardAction` variant, no new keybinding —
+    read-only, nothing to navigate to. Manual TUI verification only
+    (§5/D9).
+94. `crates/cli/src/main.rs` wiring — `debt_payoff_config` loaded fresh
+    every Dashboard entry (fail-soft with a warning on a malformed
+    file, same treatment as the other three sections) and threaded into
+    `dashboard::run` as its sixth argument. No `Screen` enum change.
+95. `docs/spec.md` — new §13.5 subsection plus a new D41 decision
+    record; this Phase T entry. Verify build/tests, commit, manual
+    end-to-end walkthrough (a hand-edited rate above the threshold on a
+    real liability source flags it with the correct balance/rate; an
+    unrated account stays silently unflagged; a fresh/empty `rules.yaml`
+    shows the `NoRatesConfigured` state rather than a false "nothing
+    flagged").
+
+## Phase U — Auto-extracted APR from statements (D42)
+
+Surfaced live the same day Phase T shipped: a hand-typed `source_id`
+typo in `rules.yaml` (`chase_credit_card` instead of the real
+`chase_sapphirereserve`) silently left nothing flagged. Real Chase/Apple
+Card statements already show APR in plain text, so this phase closes
+the manual-entry step entirely — auto-extracted and auto-written into
+`rules.yaml`, same as balance already works, per an explicit user
+decision (auto-populate, not just surface-for-copying).
+
+96. `crates/core/src/statement_import/parser.rs` — `ParsedStatement`
+    gains `apr: Option<f64>` (percentage number, `None` when the
+    institution has no APR concept or the layout lacks an interest
+    section). `vanguard.rs`/`fidelity.rs`/`morgan_stanley.rs` each get
+    a one-line `apr: None` addition — no behavior change.
+97. `crates/core/src/statement_import/chase.rs` — `extract_purchases_apr()`,
+    a two-step marker search (`INTEREST CHARGES` section, then
+    `PURCHASES` within it, then the trailing digit/decimal run) —
+    verified against real Sapphire Reserve structure, which lists
+    separate rates per balance type (Purchases/Cash Advances/Balance
+    Transfers/My Chase Loan); only Purchases is extracted, since that's
+    the rate that applies to an ordinary carried/revolving balance.
+    Tests: the Purchases rate is picked, not Cash Advances (proves the
+    two-step search is load-bearing); a checking-layout fixture with no
+    `INTEREST CHARGES` section yields `apr: None` without blocking the
+    balance.
+98. `crates/core/src/statement_import/apple_card.rs` — `extract_apr()`,
+    finds `"Annual Percentage Rate (APR)"` then the trailing
+    digit/decimal run — verified against real Apple Card structure (a
+    single flat rate, `"14.49 % (variable)"`, space before `%` unlike
+    Chase's adjacent format). Tests: real-shaped rate extracted
+    correctly; a missing APR line doesn't block a valid balance.
+99. `crates/core/src/debt_payoff_storage.rs` — `save_debt_payoff_interest_rate()`,
+    a read-modify-write mirroring `checklist_storage::set_checklist_item_status`
+    exactly. Tests: persists a new entry; overwrites an existing entry
+    (the statement-is-source-of-truth behavior — a later parsed rate
+    always wins over an earlier one, manual or parsed); doesn't disturb
+    sibling `emergency_fund`/`checklist` sections (cross-section
+    regression test, same pattern as every prior storage addition).
+100. `crates/core/src/statement_import/mod.rs` — `StatementImportProvider`
+    gains `rules_path`/`rules_lock` fields (a second, separate
+    `tokio::sync::Mutex` from `ledger_lock`, since they guard unrelated
+    files and shouldn't serialize sources with no data dependency on
+    each other), threaded through `new()`. `fetch()`'s fresh-parse
+    branch, after the existing ledger update: if
+    `source.category == Category::Liability` and `parsed.apr` is
+    `Some(rate)`, persists it — best-effort, a save failure is logged
+    via `tracing::warn!` and never fails the fetch itself (mirrors
+    §9.1's best-effort snapshot persistence). Gated to the fresh-parse
+    branch only, never the ledger-fallback "nothing new" branch (same
+    precedent D31 set for holdings). Tests: a liability-category source
+    whose statement has no APR (the only checked-in fixture is a
+    checking layout) writes nothing to `rules.yaml`; same for an
+    asset-category source. The positive "a real APR gets written" path
+    isn't covered by an automated fixture-based test here — no real
+    credit-card/Apple-Card binary PDF fixture exists in this repo yet
+    — and is instead verified by the manual walkthrough below, on top
+    of tasks 97–99's direct extraction/storage coverage.
+101. `crates/cli/src/main.rs` — `register_statement_import()` gains a
+    `rules_path` parameter, threaded into `StatementImportProvider::new()`'s
+    new second argument. Wiring only.
+102. `docs/spec.md` — §13.5 addendum + D42 decision record; this Phase U
+    entry. Verify build/tests, commit, manual end-to-end walkthrough:
+    drop the real Chase Sapphire Reserve and/or Apple Card statement
+    (already in `~/Statements/...`), run `obol`, confirm
+    `rules.yaml`'s `debt_payoff.interest_rates` gets the correct
+    `chase_sapphirereserve`/`applecard_card` entries automatically —
+    fixing the earlier `chase_credit_card` typo without hand-editing —
+    and the Dashboard's debt payoff panel reflects it.

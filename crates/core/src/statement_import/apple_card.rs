@@ -64,6 +64,7 @@ impl StatementParser for AppleCardStatementParser {
             account_identifier,
             category: Category::Liability,
             holdings: vec![],
+            apr: extract_apr(text),
         })
     }
 }
@@ -99,6 +100,25 @@ fn find_current_total_balance(text: &str) -> Option<(f64, &str)> {
     }
 
     None
+}
+
+/// Apple Card's interest rate (spec D42) — a single flat rate, unlike
+/// Chase's per-balance-type table: `"Annual Percentage Rate (APR) 14.49
+/// % (variable)"`. Note the space before `%`, unlike Chase's adjacent
+/// `"19.49%"` — the digit/decimal-point run stops at the space either
+/// way, so no separate handling is needed. Returns `None` (not an
+/// error) if the marker is absent, same missing-field convention as
+/// every other optional value in this module.
+fn extract_apr(text: &str) -> Option<f64> {
+    const MARKER: &str = "Annual Percentage Rate (APR)";
+    let start = text.find(MARKER)? + MARKER.len();
+    let window = &text[start..(start + 40).min(text.len())];
+    let digit_start = window.find(|c: char| c.is_ascii_digit())?;
+    let number: String = window[digit_start..]
+        .chars()
+        .take_while(|c| c.is_ascii_digit() || *c == '.')
+        .collect();
+    number.parse().ok()
 }
 
 /// Best-effort as-of date, matching `"as of Month DD, YYYY"`. Returns
@@ -215,5 +235,33 @@ mod tests {
 
         assert_eq!(result.balance, 10.00);
         assert_eq!(result.as_of_date, "");
+    }
+
+    #[test]
+    fn extracts_the_annual_percentage_rate() {
+        // Real Apple Card structure: a single flat rate with a space
+        // before the "%", unlike Chase's adjacent "19.49%" format.
+        let text = "Apple Card Customer\nJane Doe Statement\n\
+                     Total Balance $10.00 \nas of Apr 30, 2026\n\
+                     Interest Charges                        Interest Charge Calculation\n\
+                     2026 Total Year-to-Date:                Annual Percentage Rate (APR) 14.49 % (variable)\n";
+
+        let result = AppleCardStatementParser
+            .parse(text, &expected(None))
+            .unwrap();
+
+        assert_eq!(result.apr, Some(14.49));
+    }
+
+    #[test]
+    fn missing_apr_does_not_block_a_valid_balance() {
+        let text = "Apple Card Customer\nJane Doe Statement\nTotal Balance $10.00\n";
+
+        let result = AppleCardStatementParser
+            .parse(text, &expected(None))
+            .unwrap();
+
+        assert_eq!(result.apr, None);
+        assert_eq!(result.balance, 10.00);
     }
 }

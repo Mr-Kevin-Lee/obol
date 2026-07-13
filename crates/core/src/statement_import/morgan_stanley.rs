@@ -86,6 +86,7 @@ impl StatementParser for MorganStanleyStatementParser {
             // "Total Liabilities (outstanding balance) —" (zero).
             category: Category::Asset,
             holdings: extract_holdings(text),
+            apr: None,
         })
     }
 }

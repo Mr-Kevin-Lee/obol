@@ -17,6 +17,7 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 use crate::checklist::ChecklistStatuses;
+use crate::debt_payoff::DebtPayoffConfig;
 use crate::emergency_fund::EmergencyFundThresholds;
 use crate::monthly_spend::MonthlySpendThresholds;
 
@@ -32,6 +33,8 @@ pub(crate) struct RulesFile {
     pub(crate) checklist: ChecklistStatuses,
     #[serde(default)]
     pub(crate) monthly_spend: MonthlySpendThresholds,
+    #[serde(default)]
+    pub(crate) debt_payoff: DebtPayoffConfig,
 }
 
 #[derive(Debug, Error)]
@@ -100,6 +103,7 @@ mod tests {
         assert_eq!(rules_file.emergency_fund, EmergencyFundThresholds::default());
         assert!(rules_file.checklist.is_empty());
         assert_eq!(rules_file.monthly_spend, MonthlySpendThresholds::default());
+        assert_eq!(rules_file.debt_payoff, DebtPayoffConfig::default());
         assert!(path.exists());
 
         fs::remove_file(&path).ok();
@@ -121,6 +125,14 @@ mod tests {
                 yellow_at_or_above: 8000.0,
                 red_at_or_above: 11000.0,
             },
+            debt_payoff: DebtPayoffConfig {
+                high_interest_at_or_above: 7.0,
+                interest_rates: {
+                    let mut rates = crate::debt_payoff::DebtInterestRates::new();
+                    rates.insert("chase_credit_card".to_string(), 24.99);
+                    rates
+                },
+            },
         };
         rules_file
             .checklist
@@ -132,6 +144,7 @@ mod tests {
         assert_eq!(loaded.emergency_fund, rules_file.emergency_fund);
         assert_eq!(loaded.checklist, rules_file.checklist);
         assert_eq!(loaded.monthly_spend, rules_file.monthly_spend);
+        assert_eq!(loaded.debt_payoff, rules_file.debt_payoff);
 
         fs::remove_file(&path).ok();
     }
