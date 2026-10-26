@@ -1,4 +1,4 @@
-.PHONY: check fmt lint test audit test-keychain
+.PHONY: check fmt lint test audit test-keychain desktop-dev
 
 check: fmt lint test
 
@@ -12,8 +12,19 @@ test:
 	cargo test --workspace
 
 # Requires `cargo install cargo-audit` (one-time, not a project dependency).
+# The npm half covers the desktop frontend's dependency tree, which D43
+# accepted into the project on condition it gets the same scrutiny as the
+# Cargo one (spec §4, D21).
 audit:
 	cargo audit
+	npm --prefix crates/desktop/ui audit
+
+# Runs the Tauri desktop app against the committed fixture snapshots
+# rather than real data (D43's mock seam) — no network, no providers, no
+# `~/Library/Application Support/obol` access. Requires
+# `cargo install tauri-cli` (one-time, not a project dependency).
+desktop-dev:
+	cd crates/desktop && OBOL_STORAGE_DIR=$(CURDIR)/crates/desktop/tests/fixtures cargo tauri dev
 
 # KNOWN BROKEN, PARKED (spec.md decision D24) — not a working recipe.
 # Ignored tests that store a Keychain item with an explicit accessibility
