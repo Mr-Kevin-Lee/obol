@@ -8,9 +8,9 @@ core library + CLI/TUI. Part 1 (§1–3) is the functional requirements and
 should read as the "what" and "why." Part 2 (§4–17) is the "how" — security
 design, architecture, tech stack, and phasing. **Development is test-first
 for all core-library logic (§5, D9)** — write the failing test before the
-implementation. Don't build the HTTP interface (§6.1, §15, D7) until v0.1/v0.2
-are complete and its security design has actually been done — see D7's
-explicit deferral. Recommendation tracking (§13, FR23–FR28) is a later,
+implementation. The second interface is a Tauri desktop app (§6.1, §15, §16
+v0.3, D43) — **not** the local HTTP endpoint earlier drafts of this spec
+called for, which D43 cancelled along with the security design D7 deferred. Recommendation tracking (§13, FR23–FR28) is a later,
 separately-phased feature (v0.5, §16) — not part of v0.1's initial scope.
 
 **v0.1 broken into commit-sized tasks:** see [tasks.md](tasks.md).
@@ -46,8 +46,8 @@ this tool owns "what is my financial health right now."
   Liability (the original "Credit/Debit" phrasing was clarified to this —
   see §11 and decision D1).
 - **FR5** — Adding, editing, and removing a data source must be possible
-  entirely through the UI (CLI/TUI now, HTTP interface later) — never by
-  hand-editing a config file. See §10.1.
+  entirely through the UI (CLI/TUI now, the desktop app later — D43) —
+  never by hand-editing a config file. See §10.1.
 
 ### 2.2 Net worth & display
 
@@ -91,11 +91,13 @@ this tool owns "what is my financial health right now."
 
 ### 2.6 Interfaces
 
-- **FR19** — Usable as a CLI/TUI (built first) and, later, as a local
-  HTTP(S) endpoint reachable via browser — both retained long-term, not one
-  replacing the other. See §6.1.
-- **FR20** — The CLI/TUI must be usable for scheduled, headless runs
-  without requiring a browser to be open. See §6.1.
+- **FR19** — Usable as a CLI/TUI (built first) and, later, as a graphical
+  interface — both retained long-term, not one replacing the other. See
+  §6.1. **Narrowed by D43:** "both" means the `clap` CLI and the Tauri
+  desktop app. The `ratatui` TUI is retired rather than retained, since the
+  requirement it exists to satisfy is FR20's, and FR20 is met by the CLI.
+- **FR20** — The CLI must be usable for scheduled, headless runs
+  without requiring a window to be open. See §6.1.
 
 ### 2.7 Plaid usage visibility
 
@@ -225,8 +227,10 @@ is enabled on this machine as a baseline.
   development.
 - Any local server component binds to `127.0.0.1` only, never `0.0.0.0` —
   the dashboard should never be reachable from the local network, including
-  on shared Wi-Fi. This applies directly to the v0.3 local HTTP interface
-  (§17, D7).
+  on shared Wi-Fi. This was written for the v0.3 local HTTP interface and is
+  now **moot rather than satisfied** (D43): the Tauri desktop app has no
+  listening component at all, so there is nothing to bind. The rule stands
+  as a constraint on anything that ever does listen.
 - Browser automation uses a fresh, isolated browser context per run rather
   than a persistent profile, so bank session cookies don't accumulate on
   disk between runs.
@@ -311,7 +315,7 @@ comments so the two don't get confused.
          JSON snapshot store (versioned, local disk)
                     |
                     v
-      CLI/TUI  <——— core library ———>  Local HTTP interface (browser)
+         CLI  <——— core library ———>  Tauri desktop app (D43)
 ```
 
 Every data source is implemented behind a common `Provider` interface (see
@@ -332,23 +336,35 @@ code in it. Two separate front ends call into that same core:
          net worth calc — no UI code)
               /                    \
              /                      \
-    CLI / TUI              Local HTTP interface
-  (terminal, scriptable)   (browser, 127.0.0.1)
+        CLI                  Tauri desktop app
+  (terminal, scriptable)     (native .app window)
 ```
 
 This isn't just a build-order convenience — both interfaces are meant to
 stay around long-term, for different purposes (FR19, FR20, §2.6):
 
-- **CLI/TUI** — the right tool for scheduled, headless runs (a `launchd` job
-  running a biweekly snapshot shouldn't need a browser open), and for
+- **CLI** — the right tool for scheduled, headless runs (a `launchd` job
+  running a biweekly snapshot shouldn't need a window open), and for
   scripting/debugging during development.
-- **Local HTTP interface** — the right tool for day-to-day interactive
-  viewing, reached at `127.0.0.1:<port>` in your regular browser. This
-  becomes the default way you'll actually use the dashboard once it exists.
+- **Tauri desktop app** — the right tool for day-to-day interactive
+  viewing. This becomes the default way you'll actually use the dashboard
+  once it exists.
+
+**Revised — see D43** (supersedes D7, narrows D5). The second interface was
+originally planned as a local HTTP endpoint at `127.0.0.1:<port>` reached in
+a browser, and before that as a native `egui` binary; it is now a Tauri
+desktop app. The `ratatui` TUI was the *first* interface and is a third,
+transitional one — it retires once the desktop app reaches parity, which is
+why "CLI/TUI" is split into "CLI" above. What has not changed, and is the
+load-bearing part of this section, is that **no interface contains logic**:
+whatever the frontend is, it calls the same core library, and swapping one
+for another is a frontend change, never a rewrite.
 
 Because both sit on the same core, nothing built for the CLI/TUI phase is
-throwaway work — the HTTP interface phase adds a second front end, not a
-rewrite. See §16 for the phased build order and §15 for the specific
+throwaway work — the desktop-app phase adds a second front end, not a
+rewrite. The `ratatui` screens themselves are the one exception, and a
+deliberate one (D43): they are retired rather than carried, but everything
+they were built on top of is reused unchanged. See §16 for the phased build order and §15 for the specific
 libraries behind each interface.
 
 ### 6.2 Data flow (the default run)
@@ -421,8 +437,9 @@ trait CredentialSource {
 }
 ```
 
-The CLI implements this with a masked terminal prompt; the future HTTP
-interface (§15, D7) implements it as a form post. This is what lets both
+The CLI implements this with a masked terminal prompt; the Tauri desktop
+app (§15, D43) implements it as a form in the window, resolved through a
+Tauri command. This is what lets both
 front ends share `core::snapshot::run()` unchanged, consistent with
 §6.1's "same core, two interfaces."
 
@@ -544,7 +561,7 @@ doesn't free the cap (§7).
   created (public token exchanged for an access token) — during the Sources
   screen's "Connect via Plaid" flow (§10.1). Never decremented, including
   when a source is later removed.
-- **Both the CLI/TUI and the (future) HTTP interface display this
+- **Both the CLI/TUI and the (future) desktop app display this
   prominently** — e.g. "Plaid Items: 4/10 used" in the TUI header and on the
   Sources screen — not buried in a details view.
 - Warn clearly at 8/10; block the "Connect via Plaid" flow entirely at
@@ -578,7 +595,7 @@ existing guidance to do iterative testing there (§7).
 ## 8. Credential handling
 
 - Every run prompts for credentials needed by that run's active sources
-  (masked input, works identically in CLI/TUI and the HTTP interface) —
+  (masked input, works identically in CLI/TUI and the desktop app) —
   except Plaid sources, which use a stored access token instead (decision
   D2, §17).
 - **Implementation:** this prompting is threaded through the core snapshot
@@ -1272,6 +1289,15 @@ screen for managing connections (§10.1), a **Recommendations** screen
 for financial health tracking (§13), and a **credit card spend trend
 chart** screen (§13.4, D39).
 
+**Interface note (D43):** this section describes the screens, not the
+toolkit. It was written against `ratatui` and still reads that way; the
+same four screens are being rebuilt in the Tauri desktop app (§15, §16
+v0.3), which is why the layout details below are stated as information
+and status rather than as terminal geometry. Where a detail *is*
+terminal-specific it's marked. The GUI reproduces the same information
+and actions in native idioms — it does not mimic bordered panels or
+single-key bindings.
+
 **Dashboard:**
 - One panel per source, each independently rendered — a failed source shows a
   clear "unavailable" state with the error message, not a blank space or a
@@ -1290,7 +1316,12 @@ chart** screen (§13.4, D39).
   worth and per-category balances over time once that data exists.
 - **No in-TUI refresh in v0.1** — getting new data means quitting and
   rerunning `obol` (§6.2), which fetches, saves, and renders in one shot.
-  An in-TUI refresh keybinding is deferred to v0.4 (§16).
+  An in-TUI refresh keybinding is deferred to v0.4 (§16). **Terminal-only;
+  reversed for the desktop app (D43, superseding D19):** the GUI loads the
+  most recent snapshot from disk on launch and fetches only when Refresh is
+  pressed. Fetch-on-entry is also the code path in issue #30's indefinite
+  hang, which a window would surface as a blank, frozen app rather than a
+  slow terminal redraw.
 
 **Sources screen:**
 - List of configured sources with provider, category, type, and connection
@@ -1344,9 +1375,10 @@ chart** screen (§13.4, D39).
 | Secrets | `secrecy` + `zeroize` | `secrecy` prevents accidental exposure via `Debug`/logging; `zeroize` gives deterministic, compiler-enforced wiping on drop (§4) |
 | Keychain | `security-framework` crate | Rust bindings to macOS Security.framework; same `kSecAttrAccessibleWhenUnlockedThisDeviceOnly` ACL as before. Storing (not reading/deleting) an item with this ACL is currently broken and parked, not resolved — see D24 |
 | Retry logic | `tokio-retry` (`RetryIf` + `ExponentialBackoff`) | Same policy as §9 (3 attempts, exponential backoff, jitter); `RetryIf`'s condition closure is what lets auth failures fail fast instead of retrying (D10, §17) — simpler than hand-rolling the same branch |
-| **CLI/TUI (phase 1)** | `clap` + `ratatui` | `clap` for scriptable commands (`dashboard snapshot`), `ratatui` for the interactive terminal dashboard/sources screens — mature, well-regarded Rust TUI framework |
-| **GUI (phase 2)** | Local HTTP(S) endpoint (`127.0.0.1:<port>`), reachable via browser | Simpler packaging than a native GUI toolkit — no bundled UI framework. **Trade-off to design properly once we get here (decision D7, §17):** unlike a native app, a listening port has real local attack surface (other local processes, DNS-rebinding from a malicious page in another tab) that needs mitigating — session token, strict `Host` header checks, no CDN-loaded assets. Deferred until after v0.1/v0.2 are done, not designed yet |
-| Charts | `plotters` | Renders to both the TUI (via `ratatui` widgets) and the GUI canvas; colorblind-safe palette applied manually since it's a lower-level library than Plotly |
+| **CLI (retained)** | `clap` | Scriptable commands (`obol snapshot`, `obol sources`, `obol link`) — this is what FR20's headless, scheduled runs actually need, and it stays indefinitely |
+| **TUI (phase 1, retiring)** | `ratatui` | The interactive terminal dashboard/sources screens — mature, well-regarded Rust TUI framework, and the right first interface for validating the whole pipeline cheaply. **Retires once the desktop app reaches parity (D43)**; the four screens are deleted in a commit of their own, so a working interface exists at every point in between |
+| **GUI (phase 2)** | `tauri` 2, with a Svelte 5 + TypeScript + Vite frontend in a WKWebView | **Revised — see D43.** Replaces D7's local HTTP endpoint: a bundled `.app` has no listening port, so D7's whole mitigation list (session token, `Host`-header validation against DNS rebinding) and the §4 threat-model entry behind it disappear rather than needing to be designed. The backend stays Rust calling `obol-core` directly through Tauri commands, so there's no HTTP serialization layer for the `Provider`/`Snapshot` contract to drift across. WKWebView means no bundled Chromium. Chosen over `egui`/`iced` — which would have kept the repo 100% Rust — because a signed `.app` bundle is what carries the entitlement D24/issue #28 needs. **Accepted cost:** an npm dependency tree in a repo that had no JavaScript, mitigated per D43 (no component library, no CSS framework, nothing from a CDN, `package-lock.json` committed, `npm audit` in `make audit`) |
+| Charts | `plotters` | Retained, but rendered to an **SVG string in the Tauri backend** and handed to the frontend as data (D43) rather than drawn through `ratatui` widgets, now that the TUI is retiring. Keeps chart code in Rust where it's unit-testable and the Okabe–Ito palette defined in exactly one place, and adds no JavaScript charting dependency; the cost is no hover/tooltip interaction. Colorblind-safe palette applied manually since it's a lower-level library than Plotly |
 | Packaging | `cargo build --release` (native binary) | No interpreter or bundler runtime to ship. **Gatekeeper/notarization is not needed for v0.1/v0.2**: a binary you build locally and run from Terminal never gets the `com.apple.quarantine` attribute that triggers Gatekeeper — that only applies to files downloaded via a browser, Mail, or AirDrop. This only becomes a real question if the tool is ever distributed as a `.app` for someone else, or downloaded rather than built. **Separately, storing a Keychain item with the required `ThisDeviceOnly` ACL currently doesn't work at all, signed or not** (decision D24, §17) — parked, not resolved; the release binary can't actually persist a Plaid access token until this is fixed |
 | Dependency management | `Cargo.lock` (committed) | Rust's default toolchain is already lockfile-first, directly reinforcing the supply-chain principle in §4 |
 | Logging | `tracing` + `tracing-subscriber` | Backs the audit log requirement (§4) — structured, filterable, and the natural place to enforce "never log a credential or full account number" as a consistent policy rather than an ad-hoc discipline |
@@ -1387,20 +1419,39 @@ is verified separately, not forced into that same red-green loop (§5).
   any source Plaid can't reach well; retry/backoff hardening; full security
   hardening from §4 (file permissions, storage path, dependency pinning)
   verified end-to-end.
-- **v0.3 (local HTTP interface):** replaces the native-GUI-binary plan with a
-  local HTTP(S) endpoint (`127.0.0.1:<port>`) reachable via browser, wrapping
-  the same core library and `sources.yaml` — becomes the primary day-to-day
-  interface. The CLI/TUI is not retired; it remains the interface for
-  scheduled/headless runs (see §6.1) and continues to share 100% of the core
-  with the HTTP interface. **Security design for the HTTP layer (auth token,
-  Host-header validation, asset vendoring — see D7, §17) is scoped in detail
-  when this phase actually starts, not before** — no point designing it
-  against a moving target while v0.1/v0.2 are still in flight.
+- **v0.3 (Tauri desktop app):** a native macOS `.app` wrapping the same core
+  library and `sources.yaml`, becoming the primary day-to-day interface.
+  **Revised from the local-HTTP-endpoint plan — see D43**, which supersedes
+  D7; the security design that plan needed (auth token, Host-header
+  validation, asset vendoring) is not deferred but moot, since there is no
+  listening port. The `clap` CLI is not retired — it remains the interface
+  for scheduled/headless runs (§6.1) and shares 100% of the core. The
+  `ratatui` screens *are* retired, but only once the desktop app reaches
+  parity, in a commit of their own.
+  **Sliced rather than ported in one drop,** so none of it blocks on the
+  SimpleFIN migration (issue #37) that is changing the provider layer
+  underneath it:
+  - **v0.3a** — net worth, per-account balances grouped asset/liability, and
+    the holdings bars (FR6, FR8, FR22): everything whose only input is a
+    `Snapshot`, developed against a fixture snapshot via an
+    `OBOL_STORAGE_DIR` override. Deliberately excludes every
+    `rules.yaml`-derived panel, so it has no overlap with in-flight work.
+    Includes the explicit Refresh action (D43, superseding D19), since
+    calling async core from a Tauri command without freezing the webview is
+    the one real architectural unknown and is worth retiring first.
+  - **v0.3b** — the `rules.yaml` panels: emergency fund coverage, checklist,
+    debt payoff priority, and the credit card spend trend chart (the first
+    user of `plotters`-to-SVG).
+  - **v0.3c** — the Sources screen (§10.1), including the generated
+    add/edit forms and the provider link flows.
+  - **v0.3d** — deletion of the `ratatui` screens and implementation of the
+    headless `obol snapshot` path (FR20), which is still a stub.
 - **v0.4 (stretch):** asset-type pie chart, spending/savings trend lines,
   student loan + mortgage connectors once servicers are chosen, scheduled
   biweekly runs (`launchd` job calling the CLI, no GUI required), an
   in-TUI manual refresh command (re-fetch without quitting and rerunning
-  `obol`, §14), and a configurable storage location (§4, D17).
+  `obol`, §14) — **dropped per D43**, since the TUI retires and the desktop
+  app has Refresh from v0.3a — and a configurable storage location (§4, D17).
 - **v0.5 (recommendation tracking, §13):** rolled out in the order given in
   §13.3, each step a self-contained, shippable increment rather than one
   large feature drop:
@@ -1454,7 +1505,10 @@ Previously open questions, now resolved:
   by D7 — a local HTTP endpoint rather than a native GUI binary). The
   CLI/TUI isn't a throwaway prototype, though — it stays on as the headless
   interface for scheduled runs (`launchd`), since a biweekly snapshot job
-  shouldn't need a browser open.
+  shouldn't need a browser open. **Narrowed by D43:** what stays on is the
+  `clap` CLI, which is all a `launchd` job ever needed; the `ratatui`
+  screens retire. The sequencing claim itself held up — the TUI did validate
+  the whole pipeline cheaply before a second interface was built.
 - **D6 — Language: Rust over Python.** Driven by the "security over
   convenience" principle (FR16, §4): `secrecy`/`zeroize` close the
   memory-scrubbing gap Python can't close, `rustls` avoids OpenSSL's CVE
@@ -1465,7 +1519,12 @@ Previously open questions, now resolved:
   existing Tokio/async experience rather than starting cold.
 - **D7 — GUI phase becomes a local HTTP(S) endpoint,** not a native `egui`
   binary — reachable via browser at `127.0.0.1:<port>` instead of a
-  double-clickable app window. This trades away the zero-network-surface
+  double-clickable app window. **Superseded by D43** — the GUI is a native
+  desktop app after all, built with Tauri rather than `egui`, so none of
+  the HTTP-layer mitigations below were ever designed or built. Kept for
+  the reasoning that led here, and because part of D43's argument is that
+  this trade-off never had to be taken at all. This trades away the
+  zero-network-surface
   property a native GUI would have had, in exchange for simpler packaging.
   The mitigations that trade-off requires (session token, strict `Host`
   header validation to block DNS rebinding, no CDN-loaded assets) are
@@ -1481,7 +1540,7 @@ Previously open questions, now resolved:
   quota, so a lifetime counter is maintained by the app itself —
   incremented on every successful new Item creation, never decremented on
   removal, since `/item/remove` doesn't free the Trial cap (§7). Both the
-  TUI and the eventual HTTP interface show "Plaid Items: X/10 used"
+  TUI and the eventual desktop app show "Plaid Items: X/10 used"
   prominently, with a warning at 8/10 and a hard block on new Plaid
   connections at 10/10. Separately: Production API rate limits (5/min,
   30/hour per Item on `/accounts/balance/get`) were checked and are not a
@@ -1520,7 +1579,7 @@ Previously open questions, now resolved:
   Keychain internally (D2). This is the mechanism that keeps
   `core::snapshot::run()` — provider instantiation, concurrent per-source
   fetch, retry, PII scrubbing, snapshot assembly — identical between the
-  CLI/TUI and the future HTTP interface, per §6.1's "same core, two
+  CLI/TUI and the future desktop app, per §6.1's "same core, two
   interfaces."
 - **D13 — Failure modes beyond per-source retry** (§9.1): total-outage net
   worth display (explicit "unavailable" state, never `$0`), best-effort
@@ -1562,7 +1621,12 @@ Previously open questions, now resolved:
   quitting and rerunning `obol`, which is an acceptable workflow for a
   single-user, on-demand v0.1 tool and avoids overlapping a fresh fetch
   with a screen that's mid-render. Named as a v0.4 stretch item (§16)
-  rather than left unscoped.
+  rather than left unscoped. **Superseded by D43** (§14): the desktop app
+  loads the most recent snapshot on launch and re-fetches only on an
+  explicit Refresh, which is both safer than the TUI's fetch-on-entry
+  behaviour and unavoidable in a window that would otherwise sit blank
+  until every provider returned. This restriction stood for exactly as
+  long as the TUI was the only interface.
 - **D20 — This app's own Plaid `client_id`/`secret` live in Keychain**
   (§4), the same treatment as the per-Item access token (§8) — not an
   env var or config file for the shipped app. Driven by Plaid's own
@@ -1718,11 +1782,11 @@ Previously open questions, now resolved:
   reading a balance, not touching the login form). No bank credentials
   ever pass through this program at all in this design, not even
   transiently — they're typed directly into the real browser window.
-  **Generalizes to the future local HTTP interface (§6.1, v0.3)
+  **Generalizes to the Tauri desktop app (§6.1, v0.3, D43)
   unchanged in mechanism** — the WebDriver-launched browser window is
   always a separate, real OS-level window regardless of which interface
   triggered it; only the "tell the app you're done logging in" signal
-  changes shape (a terminal Enter key now, a button in the web page
+  changes shape (a terminal Enter key now, a button in the app window
   later), the same interface-agnostic split already established by the
   `CredentialSource` trait (D12) and Plaid Link's own polling-until-
   complete pattern (D18).
@@ -2311,3 +2375,75 @@ Previously open questions, now resolved:
   the positive "a real statement's rate gets written" path is verified
   by the manual end-to-end walkthrough against real statements instead
   of an automated fixture-based test.
+- **D43 — The GUI is a native Tauri desktop app, not a local HTTP
+  endpoint, and the `ratatui` TUI retires** (§6.1, §14, §15, §16 v0.3;
+  **supersedes D7 and D19**, narrows D5 and FR19). Tracked as issue #36.
+  The TUI caps what the dashboard can show — charts, subtotals and
+  tri-state checklist cycling all fight a terminal grid — and the
+  transaction categorization review queue (D38, issue #35) needs
+  clickable, bulk-editable rows that `ratatui` cannot give at all. That
+  queue is the deciding factor, not the cosmetics: it is the one screen
+  this project genuinely cannot build in a terminal, so the frontend
+  decision is made once, now, rather than after building it twice.
+  **Why Tauri over D7's HTTP endpoint:** D7 accepted real local attack
+  surface — a listening port, DNS-rebinding from a malicious page in
+  another tab, and a session-token/`Host`-validation design that was
+  never actually done — purely to avoid bundling a UI framework. A
+  bundled `.app` has no listening port, so that entire mitigation list,
+  and the §4 threat-model entry behind it, disappears rather than
+  needing to be designed. The backend also stays Rust calling
+  `obol-core` directly through Tauri commands, so there's no HTTP
+  serialization layer for the `Provider`/`Snapshot` contract to drift
+  across. Being honest about the reversal: D7's stated reason was
+  simpler packaging, and that reason was sound when a native GUI meant
+  shipping a toolkit; Tauri on WKWebView doesn't bundle a browser
+  engine, so the packaging argument that justified D7 no longer holds.
+  **Why Tauri over `egui`/`iced`,** which would have kept the repo 100%
+  Rust: macOS Keychain writes currently fail with
+  `errSecMissingEntitlement` (D24, issue #28), and the entitlement that
+  fixes that is carried by a signed `.app` bundle — which Tauri produces
+  as its normal build output. §15 notes the release binary cannot
+  persist a Plaid access token until D24 is resolved, so this is not a
+  side benefit but the strongest single argument for the bundle. It is
+  verified by a spike before the port begins, not assumed; if a signed
+  bundle turns out not to fix it, `egui` becomes the better choice and
+  this decision should be revisited rather than defended.
+  **Accepted cost, against §4's minimal-dependency principle:** the
+  frontend is Svelte 5 + TypeScript + Vite, which brings an npm
+  dependency tree into a repo that previously contained no JavaScript.
+  This is a genuine regression on supply-chain surface in a tool that
+  handles bank credentials, and is mitigated rather than waved away —
+  no UI component library, no CSS framework, nothing loaded from a CDN,
+  `package-lock.json` committed alongside `Cargo.lock`, and `npm audit`
+  added to `make audit` beside `cargo audit` (D21). Svelte specifically
+  because it compiles to plain JS and ships no framework runtime,
+  keeping that tree near its floor. `egui` remains the fallback if the
+  tree ever grows past what §4 tolerates.
+  **The TUI retires; the CLI does not.** FR19/FR20 and D5 required a
+  terminal interface for scheduled, headless runs — that is the `clap`
+  dispatcher and `obol snapshot`, not the `ratatui` screens. The four
+  screens (`dashboard.rs`, `sources_screen.rs`,
+  `recommendations_screen.rs`, `monthly_spend_screen.rs`) are deleted
+  only once the desktop app reaches parity, in a commit of their own, so
+  a working interface exists at every point in between. Until that
+  commit the TUI is still the usable one, which is why issue #30
+  (Dashboard hangs on re-entry) stays open rather than closing as
+  won't-fix. Keeping both long-term was considered and rejected: every
+  feature after this would be built twice, and the review queue could
+  only ever be built once anyway.
+  **Charts stay `plotters`** (§15), rendered to an SVG string in the
+  Tauri backend and handed to the frontend as data rather than drawn
+  through `ratatui` widgets. Chart code stays in Rust where it's
+  unit-testable, the Okabe–Ito palette stays defined in exactly one
+  place, and no JavaScript charting dependency is added. The cost is no
+  hover or tooltip interaction; revisited if that's actually missed,
+  which won't be known until v0.3b puts a real chart in a window.
+  **Rollout is sliced, not one port** (§16 v0.3a–d). v0.3a is net worth,
+  per-account balances and the holdings bars (FR6, FR8, FR22) —
+  everything whose only input is a `Snapshot` — and deliberately
+  excludes every `rules.yaml`-derived panel, so it overlaps nothing the
+  SimpleFIN migration (issue #37) is currently changing and can be
+  developed against a fixture snapshot in parallel with it. The mock
+  seam is an `OBOL_STORAGE_DIR` override pointed at a committed fixture,
+  not a `MockProvider`: the view's only input is a snapshot, so there is
+  nothing a fake provider would add beyond a thing to delete later.
