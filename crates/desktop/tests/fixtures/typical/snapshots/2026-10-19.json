@@ -1,0 +1,63 @@
+{
+  "schema_version": 1,
+  "snapshot_id": "fixture-typical-2026-10-19",
+  "created_at": "2026-10-19T09:00:00-07:00",
+  "accounts": [
+    {
+      "account_key": "sha256:fixture-chase-checking",
+      "source_id": "chase_checking",
+      "institution": "Chase",
+      "category": "asset",
+      "type": "checking",
+      "balance": 8100.0,
+      "currency": "USD",
+      "status": "ok"
+    },
+    {
+      "account_key": "sha256:fixture-vanguard-brokerage",
+      "source_id": "vanguard_brokerage",
+      "institution": "Vanguard",
+      "category": "asset",
+      "type": "brokerage",
+      "balance": 51000.0,
+      "currency": "USD",
+      "status": "ok",
+      "holdings": [
+        { "symbol": "VMFXX", "description": "VANGUARD FEDERAL MONEY MARKET", "value": 2000.0 },
+        { "symbol": "VBIAX", "description": "VANGUARD BALANCED INDEX ADMIRAL CL", "value": 29500.0 },
+        { "symbol": "AAPL", "description": "APPLE INC", "value": 19500.0 }
+      ]
+    },
+    {
+      "account_key": "sha256:fixture-fidelity-401k",
+      "source_id": "fidelity_401k",
+      "institution": "Fidelity",
+      "category": "asset",
+      "type": "retirement_401k",
+      "balance": null,
+      "currency": "USD",
+      "status": "error",
+      "error_message": "no statement found in ~/Statements/Fidelity/401k"
+    },
+    {
+      "account_key": "sha256:fixture-applecard-card",
+      "source_id": "applecard_card",
+      "institution": "Apple Card",
+      "category": "liability",
+      "type": "credit_card",
+      "balance": 980.5,
+      "currency": "USD",
+      "status": "ok"
+    },
+    {
+      "account_key": "sha256:fixture-chase-sapphirereserve",
+      "source_id": "chase_sapphirereserve",
+      "institution": "Chase",
+      "category": "liability",
+      "type": "credit_card",
+      "balance": 2850.25,
+      "currency": "USD",
+      "status": "ok"
+    }
+  ]
+}

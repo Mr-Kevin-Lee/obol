@@ -19,12 +19,12 @@ audit:
 	cargo audit
 	npm --prefix crates/desktop/ui audit
 
-# Runs the Tauri desktop app against the committed fixture snapshots
-# rather than real data (D43's mock seam) — no network, no providers, no
-# `~/Library/Application Support/obol` access. Requires
-# `cargo install tauri-cli` (one-time, not a project dependency).
+# Runs the Tauri desktop app against a committed fixture set rather than
+# real data (D43's mock seam). FIXTURE is one of the directories under
+# crates/desktop/tests/fixtures: typical, all-failed, or empty.
+FIXTURE ?= typical
 desktop-dev:
-	cd crates/desktop && OBOL_STORAGE_DIR=$(CURDIR)/crates/desktop/tests/fixtures cargo tauri dev
+	scripts/desktop_dev.sh $(FIXTURE)
 
 # KNOWN BROKEN, PARKED (spec.md decision D24) — not a working recipe.
 # Ignored tests that store a Keychain item with an explicit accessibility
