@@ -3,9 +3,9 @@ name = "obol-desktop"
 version.workspace = true
 edition.workspace = true
 
-# A lib alongside the bin so the view-assembly logic in `view.rs` is
-# unit-testable without launching a window (spec §5's test-first
-# mandate applies to it — it's the only new logic in this crate).
+# A lib alongside the bin so the view assembly and the load/refresh
+# operations are unit-testable without launching a window (spec §5's
+# test-first mandate applies to them).
 [lib]
 name = "obol_desktop"
 path = "src/lib.rs"
@@ -23,3 +23,8 @@ tauri = { version = "2", features = [] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
+
+[dev-dependencies]
+# For a fake `Provider` in refresh tests. Already in the tree via
+# obol-core, so this adds no new supply-chain surface (§4).
+async-trait = "0.1"
