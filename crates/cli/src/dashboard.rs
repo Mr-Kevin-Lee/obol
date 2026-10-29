@@ -21,10 +21,9 @@ use ratatui::Terminal;
 
 use obol_core::{
     calculate_current_period_spend, completion_summary, evaluate_debt_payoff_priority, status_for,
-    AccountRecord, AssetClass, Category, ChecklistItemStatus, ChecklistStatuses,
-    CurrentPeriodSpend, DebtPayoffConfig, DebtPayoffStatus, EmergencyFundStatus,
-    EmergencyFundThresholds, Holding, MonthlySpendThresholds, NetWorth, Snapshot, Status,
-    ThresholdBand, CHECKLIST_ITEMS,
+    AccountRecord, Category, ChecklistItemStatus, ChecklistStatuses, CurrentPeriodSpend,
+    DebtPayoffConfig, DebtPayoffStatus, EmergencyFundStatus, EmergencyFundThresholds,
+    MonthlySpendThresholds, NetWorth, Snapshot, Status, ThresholdBand, CHECKLIST_ITEMS,
 };
 
 // Okabe–Ito palette (§13) — chosen over red/green specifically so
@@ -130,19 +129,6 @@ fn draw(
     monthly_spend_thresholds: &MonthlySpendThresholds,
     debt_payoff_config: &DebtPayoffConfig,
 ) {
-    // Spec D31: pooled across every holdings-bearing account in this
-    // snapshot (today, at most one — Vanguard Brokerage), not just the
-    // first one found. Absent entirely (not an empty panel) whenever no
-    // account has any — most accounts/snapshots never will.
-    let all_holdings: Vec<Holding> = snapshot
-        .accounts
-        .iter()
-        .filter_map(|record| record.holdings())
-        .flatten()
-        .cloned()
-        .collect();
-    let buckets = obol_core::bucket(&all_holdings);
-
     let emergency_fund_status =
         obol_core::calculate_emergency_fund_status(&snapshot.accounts, emergency_fund_thresholds);
     let monthly_spend_status =
@@ -156,31 +142,23 @@ fn draw(
     let mut constraints = vec![
         Constraint::Length(3), // title
         Constraint::Length(4), // net worth + change-since-last-run
-        // Spec §13.1 Type A, D36: always rendered, unlike the
-        // conditional holdings-breakdown panel below — an unconfigured/
+        // Spec §13.1 Type A, D36: always rendered — an unconfigured/
         // no-data state is itself meaningful status worth always
-        // surfacing (same "not buried in a details view" instinct as
-        // the Plaid Item usage counter, §7.1), not just hidden.
+        // surfacing, not just hidden.
         Constraint::Length(3), // emergency fund coverage
         // Spec §13.4, D39: same always-rendered instinct.
         Constraint::Length(3), // credit card spend trend summary
         // Spec §13.1, D41: same always-rendered instinct, dynamic
         // height since the number of flagged debts varies (+2 for the
-        // panel's own border/title lines, same shape as the holdings-
-        // breakdown/checklist panels).
+        // panel's own border/title lines).
         Constraint::Length(debt_payoff_lines + 2), // debt payoff priority
         // Spec §13.1 Type D, D37: same always-rendered instinct as
         // emergency fund coverage above — the full 7-item list, not
         // just a count, so the current state is visible without
         // leaving the Dashboard (+2 for the panel's own border/title
-        // lines, one line per item, same shape as the holdings-
-        // breakdown panel below).
+        // lines, one line per item).
         Constraint::Length(CHECKLIST_ITEMS.len() as u16 + 2), // checklist
     ];
-    if !buckets.is_empty() {
-        // +2 for the panel's own border/title lines, one line per bucket.
-        constraints.push(Constraint::Length(buckets.len() as u16 + 2));
-    }
     constraints.push(Constraint::Min(3)); // assets
     constraints.push(Constraint::Min(3)); // liabilities
     constraints.push(Constraint::Length(1)); // footer
@@ -198,10 +176,6 @@ fn draw(
     draw_checklist(frame, areas[5], checklist_statuses);
 
     let mut next = 6;
-    if !buckets.is_empty() {
-        draw_holdings_breakdown(frame, areas[next], &buckets);
-        next += 1;
-    }
     draw_group(
         frame,
         areas[next],
@@ -294,9 +268,8 @@ fn change_since_previous(current: NetWorth, previous: Option<&Snapshot>) -> Opti
 }
 
 /// Emergency fund coverage (spec §13.1 Type A, D36) — one line, always
-/// rendered (see `draw`'s comment on why this differs from the
-/// conditional holdings-breakdown panel below). Band color + text label
-/// together, never color alone (FR27).
+/// rendered (see `draw`'s comment). Band color + text label together,
+/// never color alone (FR27).
 fn draw_emergency_fund_coverage(frame: &mut Frame, area: Rect, status: &EmergencyFundStatus) {
     let line = match status {
         EmergencyFundStatus::Computed {
@@ -416,8 +389,8 @@ fn draw_debt_payoff_priority(frame: &mut Frame, area: Rect, status: &DebtPayoffS
 /// current status, always rendered (same "not buried in a details
 /// view" instinct as the emergency-fund panel above), not just a
 /// count. Read-only here; toggling happens on the Recommendations
-/// screen (`'r'`). Mirrors `draw_holdings_breakdown`'s "one line per
-/// entry inside a bordered panel" shape. `[x]`/`[ ]`/`[-]` symbol
+/// screen (`'r'`). One line per entry inside a bordered panel.
+/// `[x]`/`[ ]`/`[-]` symbol
 /// markers disambiguate every state regardless of color (FR27);
 /// `BLUISH_GREEN` is added on top for Complete only, matching
 /// `recommendations_screen.rs`'s own rendering exactly.
@@ -459,49 +432,6 @@ fn threshold_band_color(band: ThresholdBand) -> Color {
         ThresholdBand::Red => VERMILLION,
         ThresholdBand::Yellow => ORANGE,
         ThresholdBand::Green => BLUISH_GREEN,
-    }
-}
-
-/// One horizontal bar per asset class (cash/ETF/individual stock, spec
-/// D31) — the terminal-native stand-in for a pie chart agreed on for
-/// this feature, since ratatui has no native pie/donut widget. `buckets`
-/// is already-aggregated `(AssetClass, dollar total)` pairs from
-/// `obol_core::bucket` — this function only renders, it never touches
-/// raw holdings or classification itself.
-fn draw_holdings_breakdown(frame: &mut Frame, area: Rect, buckets: &[(AssetClass, f64)]) {
-    const BAR_WIDTH: usize = 30;
-    let total: f64 = buckets.iter().map(|(_, value)| value).sum();
-
-    let lines: Vec<Line> = buckets
-        .iter()
-        .map(|(class, value)| {
-            let fraction = if total > 0.0 { value / total } else { 0.0 };
-            let filled = ((fraction * BAR_WIDTH as f64).round() as usize).min(BAR_WIDTH);
-            let bar = format!("{}{}", "█".repeat(filled), "░".repeat(BAR_WIDTH - filled));
-
-            Line::from(vec![
-                Span::raw(format!("{:<16}", class.label())),
-                Span::styled(bar, Style::default().fg(asset_class_color(*class))),
-                Span::raw(format!("  {:>5.1}%  ${value:.2}", fraction * 100.0)),
-            ])
-        })
-        .collect();
-
-    frame.render_widget(
-        Paragraph::new(lines).block(
-            Block::default()
-                .borders(Borders::ALL)
-                .title("Holdings Breakdown"),
-        ),
-        area,
-    );
-}
-
-fn asset_class_color(class: AssetClass) -> Color {
-    match class {
-        AssetClass::Cash => BLUE,
-        AssetClass::Fund => BLUISH_GREEN,
-        AssetClass::Stock => VERMILLION,
     }
 }
 

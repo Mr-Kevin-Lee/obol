@@ -50,6 +50,14 @@ pub enum RetryableError<E> {
     Operation(E),
 }
 
+/// The delays between attempts, before jitter: `initial`, then double each
+/// time. `ExponentialBackoff::from_millis(base)` yields base^n ms, so using
+/// the initial delay as the base would give 2s then ~67 minutes; base 2
+/// scaled by a factor really doubles.
+fn backoff_strategy(initial: Duration) -> ExponentialBackoff {
+    ExponentialBackoff::from_millis(2).factor(initial.as_millis() as u64 / 2)
+}
+
 /// Runs `operation` with §9's retry policy. `is_retryable` decides
 /// whether a given operation error should be retried at all — auth
 /// failures should return `false` here to fail fast.
@@ -63,7 +71,7 @@ where
     Fut: Future<Output = Result<T, E>>,
 {
     let retries = config.max_attempts.saturating_sub(1);
-    let strategy = ExponentialBackoff::from_millis(config.initial_backoff.as_millis() as u64)
+    let strategy = backoff_strategy(config.initial_backoff)
         .map(jitter)
         .take(retries);
 
@@ -110,6 +118,19 @@ mod tests {
             initial_backoff: Duration::from_millis(10),
             per_attempt_timeout: Duration::from_millis(200),
         }
+    }
+
+    #[test]
+    fn backoff_doubles_from_the_initial_delay() {
+        let delays: Vec<Duration> = backoff_strategy(Duration::from_secs(2)).take(3).collect();
+        assert_eq!(
+            delays,
+            [
+                Duration::from_secs(2),
+                Duration::from_secs(4),
+                Duration::from_secs(8)
+            ]
+        );
     }
 
     #[test]
@@ -246,12 +267,12 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn backoff_delays_roughly_increase_between_attempts() {
+    async fn backoff_total_wait_stays_within_the_doubling_schedule() {
         let timestamps: Arc<Mutex<Vec<Instant>>> = Arc::new(Mutex::new(Vec::new()));
         let timestamps_clone = timestamps.clone();
         let config = RetryConfig {
             max_attempts: 3,
-            initial_backoff: Duration::from_millis(30),
+            initial_backoff: Duration::from_millis(100),
             per_attempt_timeout: Duration::from_millis(500),
         };
 
@@ -270,15 +291,15 @@ mod tests {
 
         let recorded = timestamps.lock().await;
         assert_eq!(recorded.len(), 3);
-        let gap1 = recorded[1].duration_since(recorded[0]);
-        let gap2 = recorded[2].duration_since(recorded[1]);
-        // With jitter (±20%) this won't be exact, but the second gap
-        // (backoff ~60ms before jitter) should clearly be larger than
-        // the first (~30ms before jitter) — loose bounds, not asserting
-        // tokio-retry's own jitter math precisely.
+        let total = recorded[2].duration_since(recorded[0]);
+        // tokio-retry's jitter scales each delay by a random factor in
+        // [0, 1), so the gaps themselves are random (comparing them is
+        // flaky). The schedule's ceiling is 100ms + 200ms; a base-100 bug
+        // (100ms, then 10s) would blow well past this bound. The exact
+        // doubling is checked by `backoff_doubles_from_the_initial_delay`.
         assert!(
-            gap2 > gap1,
-            "expected increasing backoff between attempts, got {gap1:?} then {gap2:?}"
+            total < Duration::from_millis(550),
+            "expected the two backoffs to total at most ~300ms, got {total:?}"
         );
     }
 }

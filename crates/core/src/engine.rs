@@ -6,7 +6,7 @@
 //! **Account trait objects never carry raw PII** (D11/§11.1 — `Asset`/
 //! `Liability` only have `account_key`/`institution`/`balance`/`status`
 //! fields; a provider computes the hashed `account_key` itself before
-//! ever constructing one, e.g. `PlaidProvider` calling
+//! ever constructing one, e.g. `SimpleFinProvider` calling
 //! `pii::hash_account_number` directly). So the "PII-scrubbed assembly"
 //! step here is a plain field mapping, not a second scrub pass —
 //! `category`/`type`/`source_id` come from the `SourceConfig` that was
@@ -31,13 +31,9 @@
 //! between erroring and succeeding across runs — not a correctness
 //! issue for any v1 requirement.
 //!
-//! **§9.1 failure-mode wiring** also lives here: a Plaid source whose
-//! Keychain read fails gets a specific "reconnect this source" message
-//! rather than being routed through `PlaidProvider` (which can't tell a
-//! Keychain failure apart from any other reason it got no credentials),
-//! and [`run_and_save`] guarantees a save failure never discards the
-//! snapshot that was just fetched (best-effort, not blocking,
-//! persistence).
+//! **§9.1 failure-mode wiring** also lives here: [`run_and_save`]
+//! guarantees a save failure never discards the snapshot that was just
+//! fetched (best-effort, not blocking, persistence).
 
 use std::collections::HashMap;
 use std::path::Path;
@@ -54,17 +50,10 @@ use crate::storage::StorageError;
 
 const CURRENCY: &str = "USD";
 
-/// §9.1: "a Plaid Keychain read failure is treated as a relink signal,
-/// not a generic error" — this exact wording is what points the user at
-/// the Sources screen's existing Reconnect flow, rather than a generic
-/// auth-failure message that doesn't say what to do about it.
-const PLAID_RECONNECT_MESSAGE: &str =
-    "Plaid access token could not be read from Keychain — reconnect this source from the Sources screen";
-
 /// Interactive credential prompting, threaded through core without
 /// giving core a UI-crate dependency (spec §6.2, decision D12). Called
-/// once per source that needs it — never for Plaid sources, which
-/// resolve their access token from Keychain internally (§8).
+/// once per source that needs it — never for SimpleFIN sources, whose
+/// Access URL the engine resolves itself (env var, then Keychain).
 pub trait CredentialSource: Send + Sync {
     fn provide(&self, source: &SourceConfig) -> Option<Credentials>;
 }
@@ -82,6 +71,33 @@ pub async fn run(
     registry: &HashMap<&'static str, ProviderFactory>,
     credential_source: &dyn CredentialSource,
 ) -> Snapshot {
+    run_with(
+        sources,
+        registry,
+        credential_source,
+        std::env::var(crate::simplefin_provider::ACCESS_URL_ENV_VAR).ok(),
+        || crate::read_simplefin_access_url().ok(),
+    )
+    .await
+}
+
+/// `run` with the environment value and Keychain reader passed in, so
+/// tests never touch the real ones. The SimpleFIN Access URL is one value
+/// shared by every SimpleFIN source, so it is resolved once per run (and
+/// only if some source needs it), not once per source.
+async fn run_with(
+    sources: &[SourceConfig],
+    registry: &HashMap<&'static str, ProviderFactory>,
+    credential_source: &dyn CredentialSource,
+    env_value: Option<String>,
+    read_keychain: impl FnOnce() -> Option<secrecy::Secret<String>>,
+) -> Snapshot {
+    let simplefin_url = sources
+        .iter()
+        .any(|s| s.provider == "simplefin")
+        .then(|| crate::simplefin_provider::resolve_access_url(env_value, read_keychain))
+        .flatten();
+
     let mut providers: HashMap<String, Arc<dyn Provider>> = HashMap::new();
     for source in sources {
         if providers.contains_key(&source.provider) {
@@ -94,20 +110,16 @@ pub async fn run(
 
     let mut join_set = tokio::task::JoinSet::new();
     for source in sources.iter().cloned() {
-        match resolve_credentials(&source, credential_source) {
-            CredentialResolution::PlaidKeychainUnavailable => {
-                // §9.1: treated as a relink signal, not routed through
-                // fetch_one/PlaidProvider at all — that would only ever
-                // produce a generic "no access token" auth error, not
-                // this specific, actionable message.
-                let record = error_record(&source, PLAID_RECONNECT_MESSAGE.to_string());
-                join_set.spawn(async move { vec![record] });
-            }
-            CredentialResolution::Resolved(credentials) => {
-                let provider = providers.get(&source.provider).cloned();
-                join_set.spawn(fetch_one(source, provider, credentials));
-            }
-        }
+        // SimpleFIN sources share the Access URL resolved above and never
+        // prompt; every other source goes through the interactive
+        // `CredentialSource` callback.
+        let credentials = if source.provider == "simplefin" {
+            simplefin_url.clone().map(Credentials)
+        } else {
+            credential_source.provide(&source)
+        };
+        let provider = providers.get(&source.provider).cloned();
+        join_set.spawn(fetch_one(source, provider, credentials));
     }
 
     let mut accounts = Vec::new();
@@ -194,79 +206,6 @@ pub async fn run_and_save(
         snapshot,
         save_error,
     }
-}
-
-enum CredentialResolution {
-    Resolved(Option<Credentials>),
-    /// Specifically a Plaid source whose Keychain read failed (§9.1) —
-    /// kept distinct from `Resolved(None)` so `run()` can short-circuit
-    /// straight to the reconnect-signal error record instead of routing
-    /// through `PlaidProvider`, which has no way to tell "Keychain read
-    /// failed" apart from any other reason it got no credentials.
-    PlaidKeychainUnavailable,
-}
-
-/// Dev/testing-only escape hatches for the parked Keychain signing bug
-/// (D24) — mirrors the precedent already established for this app's own
-/// Plaid `client_id`/`secret` (D20): fine for verifying real behavior
-/// against a real Plaid Item, never how the shipped app holds this
-/// credential at rest. Checked in order:
-///
-/// 1. `source.provider_config.dev_access_token` — a plaintext token
-///    sitting in `sources.yaml` itself, persisting across runs so
-///    multiple real institutions (each its own Item, its own token,
-///    D23) can be configured once rather than re-supplied every run.
-///    The most convenient option and the least secure one — a real,
-///    live credential at rest, unencrypted, for as long as it's there.
-/// 2. `PLAID_DEV_ACCESS_TOKEN` — one token for *every* Plaid source in
-///    the run alike, session-scoped (nothing written to disk). Kept
-///    for quick one-off testing against a single Item.
-///
-/// Whenever D24 is actually fixed, any `dev_access_token` left in
-/// `sources.yaml` should be migrated into real Keychain storage and
-/// stripped back out — this was never meant to be permanent.
-const DEV_ACCESS_TOKEN_ENV_VAR: &str = "PLAID_DEV_ACCESS_TOKEN";
-const DEV_ACCESS_TOKEN_CONFIG_KEY: &str = "dev_access_token";
-
-/// Plaid sources resolve their access token from Keychain directly and
-/// never prompt (§8). Every other source goes through the interactive
-/// `CredentialSource` callback.
-fn resolve_credentials(
-    source: &SourceConfig,
-    credential_source: &dyn CredentialSource,
-) -> CredentialResolution {
-    if source.provider == "plaid" {
-        if let Some(token) = source
-            .provider_config
-            .get(DEV_ACCESS_TOKEN_CONFIG_KEY)
-            .and_then(|v| v.as_str())
-        {
-            warn_dev_bridge_used(
-                &source.id,
-                "sources.yaml's provider_config.dev_access_token",
-            );
-            return CredentialResolution::Resolved(Some(Credentials(secrecy::Secret::new(
-                token.to_string(),
-            ))));
-        }
-        if let Ok(token) = std::env::var(DEV_ACCESS_TOKEN_ENV_VAR) {
-            warn_dev_bridge_used(&source.id, DEV_ACCESS_TOKEN_ENV_VAR);
-            return CredentialResolution::Resolved(Some(Credentials(secrecy::Secret::new(token))));
-        }
-        match crate::read_plaid_access_token(&source.id) {
-            Ok(token) => CredentialResolution::Resolved(Some(Credentials(token))),
-            Err(_) => CredentialResolution::PlaidKeychainUnavailable,
-        }
-    } else {
-        CredentialResolution::Resolved(credential_source.provide(source))
-    }
-}
-
-fn warn_dev_bridge_used(source_id: &str, via: &str) {
-    eprintln!(
-        "warning: source '{source_id}' is using {via} (dev/testing bridge, \
-         not real credential storage — see D24)"
-    );
 }
 
 async fn fetch_one(
@@ -650,75 +589,135 @@ mod tests {
             .contains("unknown provider: 'does_not_exist'"));
     }
 
-    #[tokio::test]
-    async fn plaid_sources_never_call_the_credential_source_callback() {
-        // No real Keychain entry exists for this made-up source id, so
-        // read_plaid_access_token fails fast with a real (harmless,
-        // read-only) "not found" — no signing/entitlement needed for a
-        // read, unlike store (see keychain.rs, D24).
-        let registry: HashMap<&'static str, ProviderFactory> = HashMap::new();
-        let sources = vec![
-            fake_source(
-                "plaid_source_with_no_keychain_entry",
-                "plaid",
-                Category::Asset,
-            ),
-            fake_source("generic_source", "generic", Category::Asset),
-        ];
-        let calls = Arc::new(AtomicUsize::new(0));
-        let credential_source = FakeCredentialSource {
-            calls: calls.clone(),
-        };
+    /// Records the credentials each fetch is given, then fails (the
+    /// outcome is irrelevant to the credential tests).
+    struct RecordingProvider {
+        seen: Arc<std::sync::Mutex<Vec<Option<String>>>>,
+    }
 
-        run(&sources, &registry, &credential_source).await;
+    #[async_trait]
+    impl Provider for RecordingProvider {
+        async fn fetch(
+            &self,
+            _source: &SourceConfig,
+            credentials: Option<&Credentials>,
+        ) -> Result<Vec<Box<dyn Account>>, ProviderError> {
+            self.seen
+                .lock()
+                .unwrap()
+                .push(credentials.map(|c| secrecy::ExposeSecret::expose_secret(&c.0).clone()));
+            Err(ProviderError::Other("recorded".into()))
+        }
+    }
 
-        assert_eq!(
-            calls.load(Ordering::SeqCst),
-            1,
-            "CredentialSource should be called once, for the non-Plaid source only"
+    fn recording_registry(
+        seen: &Arc<std::sync::Mutex<Vec<Option<String>>>>,
+    ) -> HashMap<&'static str, ProviderFactory> {
+        let seen = seen.clone();
+        let mut registry: HashMap<&'static str, ProviderFactory> = HashMap::new();
+        registry.insert(
+            "simplefin",
+            Box::new(move || {
+                Box::new(RecordingProvider { seen: seen.clone() }) as Box<dyn Provider>
+            }),
         );
+        registry
+    }
+
+    fn three_simplefin_sources() -> Vec<SourceConfig> {
+        ["a", "b", "c"]
+            .map(|id| fake_source(id, "simplefin", Category::Asset))
+            .to_vec()
     }
 
     #[tokio::test]
-    async fn a_dev_access_token_in_provider_config_is_used_without_touching_keychain_or_env() {
-        // Assumes a clean local environment (no PLAID_DEV_ACCESS_TOKEN
-        // set) and no real Keychain entry for this made-up source id —
-        // same informal assumption the other Keychain-adjacent tests in
-        // this file already make. If resolve_credentials fell through
-        // to either of those instead of the per-source config value,
-        // this source would end up PlaidKeychainUnavailable, not a
-        // successful fetch.
-        let mut registry: HashMap<&'static str, ProviderFactory> = HashMap::new();
-        registry.insert(
-            "plaid",
-            counting_registry_entry(
-                Arc::new(AtomicUsize::new(0)),
-                Arc::new(AtomicUsize::new(0)),
-                Duration::ZERO,
-                FakeResult::Ok,
-            ),
-        );
-        let source = SourceConfig {
-            id: "chase_checking_with_dev_token".into(),
-            provider: "plaid".into(),
-            category: Category::Asset,
-            account_type: "checking".into(),
-            institution: "Chase".into(),
-            account_salt: "test-salt".into(),
-            provider_config: serde_json::json!({ "dev_access_token": "access-production-fake" }),
-        };
+    async fn every_simplefin_source_gets_the_url_from_a_single_keychain_read() {
+        let seen = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let reads = Arc::new(AtomicUsize::new(0));
         let credential_source = FakeCredentialSource {
             calls: Arc::new(AtomicUsize::new(0)),
         };
 
-        let snapshot = run(&[source], &registry, &credential_source).await;
+        let reads_in_closure = reads.clone();
+        run_with(
+            &three_simplefin_sources(),
+            &recording_registry(&seen),
+            &credential_source,
+            None,
+            move || {
+                reads_in_closure.fetch_add(1, Ordering::SeqCst);
+                Some(secrecy::Secret::new("https://from-keychain".to_string()))
+            },
+        )
+        .await;
 
-        assert_eq!(snapshot.accounts.len(), 1);
         assert_eq!(
-            snapshot.accounts[0].status(),
-            Status::Ok,
-            "expected the per-source dev_access_token to resolve credentials successfully"
+            (seen.lock().unwrap().clone(), reads.load(Ordering::SeqCst)),
+            (vec![Some("https://from-keychain".to_string()); 3], 1)
         );
+    }
+
+    #[tokio::test]
+    async fn a_simplefin_env_value_wins_and_the_keychain_is_not_read() {
+        let seen = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let credential_source = FakeCredentialSource {
+            calls: Arc::new(AtomicUsize::new(0)),
+        };
+
+        run_with(
+            &three_simplefin_sources(),
+            &recording_registry(&seen),
+            &credential_source,
+            Some("https://from-env".to_string()),
+            || panic!("the Keychain must not be read when the env value is set"),
+        )
+        .await;
+
+        assert_eq!(
+            seen.lock().unwrap().clone(),
+            vec![Some("https://from-env".to_string()); 3]
+        );
+    }
+
+    #[tokio::test]
+    async fn the_keychain_is_not_read_when_no_source_uses_simplefin() {
+        let registry: HashMap<&'static str, ProviderFactory> = HashMap::new();
+        let credential_source = FakeCredentialSource {
+            calls: Arc::new(AtomicUsize::new(0)),
+        };
+
+        run_with(
+            &[fake_source("only", "generic", Category::Asset)],
+            &registry,
+            &credential_source,
+            None,
+            || panic!("the Keychain must not be read without a SimpleFIN source"),
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn only_non_simplefin_sources_use_the_credential_source() {
+        let seen = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let calls = Arc::new(AtomicUsize::new(0));
+        let credential_source = FakeCredentialSource {
+            calls: calls.clone(),
+        };
+        let sources = vec![
+            fake_source("sf", "simplefin", Category::Asset),
+            fake_source("other", "generic", Category::Asset),
+        ];
+
+        run_with(
+            &sources,
+            &recording_registry(&seen),
+            &credential_source,
+            None,
+            || None,
+        )
+        .await;
+
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
     }
 
     #[tokio::test]
@@ -746,37 +745,6 @@ mod tests {
         let second = run(&[], &registry, &credential_source).await;
 
         assert_ne!(first.snapshot_id, second.snapshot_id);
-    }
-
-    #[tokio::test]
-    async fn a_plaid_keychain_read_failure_produces_a_reconnect_message_not_a_generic_one() {
-        // Same "no real entry for this made-up id" mechanism as the
-        // callback test above — a real, fast, read-only Keychain miss,
-        // not something requiring a signed binary (D24).
-        let registry: HashMap<&'static str, ProviderFactory> = HashMap::new();
-        let sources = vec![fake_source(
-            "plaid_source_never_linked",
-            "plaid",
-            Category::Asset,
-        )];
-        let credential_source = FakeCredentialSource {
-            calls: Arc::new(AtomicUsize::new(0)),
-        };
-
-        let snapshot = run(&sources, &registry, &credential_source).await;
-
-        assert_eq!(snapshot.accounts.len(), 1);
-        let record = &snapshot.accounts[0];
-        assert_eq!(record.status(), Status::Error);
-        let message = record.error_message().unwrap();
-        assert!(
-            message.contains("reconnect"),
-            "expected a reconnect-signal message, got: {message}"
-        );
-        assert!(
-            !message.contains("no access token"),
-            "should not fall through to PlaidProvider's generic auth message: {message}"
-        );
     }
 
     #[tokio::test]

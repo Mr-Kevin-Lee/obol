@@ -1,5 +1,6 @@
 mod dashboard;
 mod form;
+mod link;
 mod mode;
 mod monthly_spend_screen;
 mod recommendations_screen;
@@ -13,78 +14,16 @@ use clap::{Parser, Subcommand};
 use mode::{determine_mode, Mode, RequestedCommand};
 use obol_core::{CredentialSource, Credentials, SourceConfig};
 
-/// No interactive `Provider` (webdriver, manual entry) is registered
-/// yet — this is a placeholder that always declines, to be replaced
-/// with a real terminal-prompt implementation once one exists. Plaid
-/// sources never reach this at all (§8, resolved from Keychain
-/// internally by the engine).
+/// No interactive `Provider` (manual entry) is registered yet — this is
+/// a placeholder that always declines, to be replaced with a real
+/// terminal-prompt implementation once one exists. SimpleFIN sources
+/// never reach this at all (the engine resolves their Access URL).
 struct NoInteractiveProvidersYet;
 
 impl CredentialSource for NoInteractiveProvidersYet {
     fn provide(&self, _source: &SourceConfig) -> Option<Credentials> {
         None
     }
-}
-
-/// Dev/testing-only wiring (see spec.md D24's addendum) — registers a
-/// real `PlaidProvider` if `PLAID_CLIENT_ID`/`PLAID_SECRET` are set in
-/// the environment, mirroring the same env-var convention used
-/// elsewhere for these credentials (D20). No-op (registry stays empty
-/// for "plaid") if they're not set. `PLAID_ENVIRONMENT=production`
-/// opts into real Production; anything else (including unset) stays on
-/// Sandbox, matching the project's "test against Sandbox first"
-/// discipline (§7).
-fn maybe_register_plaid(
-    registry: &mut std::collections::HashMap<&'static str, obol_core::ProviderFactory>,
-) {
-    let (Ok(client_id), Ok(secret)) = (
-        std::env::var("PLAID_CLIENT_ID"),
-        std::env::var("PLAID_SECRET"),
-    ) else {
-        return;
-    };
-    let environment = if std::env::var("PLAID_ENVIRONMENT").as_deref() == Ok("production") {
-        obol_core::PlaidEnvironment::Production
-    } else {
-        obol_core::PlaidEnvironment::Sandbox
-    };
-
-    registry.insert(
-        "plaid",
-        Box::new(move || {
-            let client = obol_core::PlaidClient::new(obol_core::PlaidConfig {
-                client_id: client_id.clone(),
-                secret: secrecy::Secret::new(secret.clone()),
-                environment: environment.clone(),
-            });
-            Box::new(obol_core::PlaidProvider::new(client)) as Box<dyn obol_core::Provider>
-        }),
-    );
-}
-
-/// Registers the statement-import provider (spec §6.3, D28) —
-/// unconditional, unlike `maybe_register_plaid`, since this provider
-/// reads local files rather than calling an external API and so has no
-/// credentials to gate on. Needs a path for its processed-files ledger
-/// (lives alongside `item_usage.json` under the storage directory) and,
-/// as of D42, `rules.yaml`'s path too — a parsed statement's interest
-/// rate is auto-persisted there.
-fn register_statement_import(
-    registry: &mut std::collections::HashMap<&'static str, obol_core::ProviderFactory>,
-    processed_statements_path: &std::path::Path,
-    rules_path: &std::path::Path,
-) {
-    let ledger_path = processed_statements_path.to_path_buf();
-    let rules_path = rules_path.to_path_buf();
-    registry.insert(
-        "statement_import",
-        Box::new(move || {
-            Box::new(obol_core::StatementImportProvider::new(
-                ledger_path.clone(),
-                rules_path.clone(),
-            )) as Box<dyn obol_core::Provider>
-        }),
-    );
 }
 
 #[derive(Parser)]
@@ -104,6 +43,17 @@ enum Commands {
     Snapshot,
     /// Jump straight to the Sources screen.
     Sources,
+    /// Link a data provider's accounts as sources.
+    Link {
+        #[command(subcommand)]
+        provider: LinkProvider,
+    },
+}
+
+#[derive(Subcommand)]
+enum LinkProvider {
+    /// Claim a SimpleFIN Setup Token and add its accounts.
+    Simplefin,
 }
 
 /// `~/Library/Application Support/obol/` (spec §4, §11.1) — outside any
@@ -111,15 +61,6 @@ enum Commands {
 fn storage_dir() -> PathBuf {
     let home = std::env::var("HOME").expect("HOME must be set");
     PathBuf::from(home).join("Library/Application Support/obol")
-}
-
-/// `~/Statements/` (spec §6.3 addendum, D29) — the root of the
-/// `<Institution>/<Account>` convention `discover_statement_sources`
-/// scans. Fixed rather than configurable in v1, same as `storage_dir`
-/// (D17).
-fn statements_root() -> PathBuf {
-    let home = std::env::var("HOME").expect("HOME must be set");
-    PathBuf::from(home).join("Statements")
 }
 
 /// Loads emergency-fund thresholds (spec §13.1 Type A, D36) from
@@ -211,69 +152,44 @@ async fn main() {
         None => RequestedCommand::Default,
         Some(Commands::Snapshot) => RequestedCommand::Snapshot,
         Some(Commands::Sources) => RequestedCommand::Sources,
+        Some(Commands::Link {
+            provider: LinkProvider::Simplefin,
+        }) => {
+            link::run_simplefin(&storage_dir().join("sources.yaml")).await;
+            return;
+        }
     };
 
     let storage_dir = storage_dir();
     init_audit_log(&storage_dir);
     let sources_path = storage_dir.join("sources.yaml");
-    let item_usage_path = storage_dir.join("item_usage.json");
-    let processed_statements_path = storage_dir.join("processed_statements.json");
     let snapshots_dir = storage_dir.join("snapshots");
     let rules_path = storage_dir.join("rules.yaml");
-    let mut sources = match obol_core::load_or_init(&sources_path) {
+    let sources = match obol_core::load_or_init(&sources_path) {
         Ok(sources) => sources,
         Err(err) => {
             // §9.1: a malformed sources.yaml blocks the whole run with a
             // clear message rather than falling back to an empty list.
-            // Deliberately checked before auto-discovery below — a
-            // broken config should never be written to while it's
-            // already broken.
             eprintln!("sources.yaml could not be loaded: {err}");
             std::process::exit(1);
         }
     };
 
-    // Statement auto-discovery (spec D29): runs once per process, here
-    // at startup — matching this CLI's one-shot synchronous invocation
-    // model (no background watcher). A directory added while obol is
-    // already running won't be picked up until the next invocation.
-    // Pushing newly-added sources into the in-memory `sources` directly
-    // (rather than re-reading the file) keeps `determine_mode` below
-    // accurate without a third disk read.
-    for new_source in obol_core::discover_statement_sources(&statements_root(), &sources) {
-        match obol_core::add_source(&sources_path, new_source.clone()) {
-            Ok(()) => sources.push(new_source),
-            Err(err) => eprintln!("warning: could not add auto-discovered source: {err}"),
-        }
-    }
-
     match determine_mode(sources.is_empty(), requested) {
         Mode::FirstRunSources | Mode::Sources => {
-            run_screen_loop(
-                Screen::Sources,
-                &sources_path,
-                &item_usage_path,
-                &processed_statements_path,
-                &snapshots_dir,
-                &rules_path,
-            )
-            .await;
+            run_screen_loop(Screen::Sources, &sources_path, &snapshots_dir, &rules_path).await;
         }
         Mode::Dashboard => {
             run_screen_loop(
                 Screen::Dashboard,
                 &sources_path,
-                &item_usage_path,
-                &processed_statements_path,
                 &snapshots_dir,
                 &rules_path,
             )
             .await;
         }
         Mode::SnapshotHeadless => {
-            println!(
-                "Headless snapshot goes here — pending a registered provider (ManualEntryProvider/PlaidProvider)."
-            );
+            println!("Headless snapshot is not implemented yet.");
         }
         Mode::NothingToSnapshot => {
             println!("No sources configured — nothing to snapshot.");
@@ -299,23 +215,19 @@ enum Screen {
 async fn run_screen_loop(
     mut screen: Screen,
     sources_path: &std::path::Path,
-    item_usage_path: &std::path::Path,
-    processed_statements_path: &std::path::Path,
     snapshots_dir: &std::path::Path,
     rules_path: &std::path::Path,
 ) {
     loop {
         screen = match screen {
-            Screen::Sources => {
-                match sources_screen::run(sources_path, item_usage_path, snapshots_dir).await {
-                    Ok(sources_screen::SourcesAction::Quit) => return,
-                    Ok(sources_screen::SourcesAction::GoToDashboard) => Screen::Dashboard,
-                    Err(err) => {
-                        eprintln!("sources screen failed: {err}");
-                        std::process::exit(1);
-                    }
+            Screen::Sources => match sources_screen::run(sources_path, snapshots_dir) {
+                Ok(sources_screen::SourcesAction::Quit) => return,
+                Ok(sources_screen::SourcesAction::GoToDashboard) => Screen::Dashboard,
+                Err(err) => {
+                    eprintln!("sources screen failed: {err}");
+                    std::process::exit(1);
                 }
-            }
+            },
             Screen::Recommendations => match recommendations_screen::run(rules_path) {
                 Ok(recommendations_screen::RecommendationsAction::Quit) => return,
                 Ok(recommendations_screen::RecommendationsAction::GoToDashboard) => {
@@ -356,8 +268,10 @@ async fn run_screen_loop(
                     .next();
 
                 let mut registry = obol_core::provider_registry();
-                maybe_register_plaid(&mut registry);
-                register_statement_import(&mut registry, processed_statements_path, rules_path);
+                obol_core::register_simplefin(
+                    &mut registry,
+                    sources_path.with_file_name("simplefin_usage.json"),
+                );
                 let credential_source = NoInteractiveProvidersYet;
 
                 let result =
@@ -383,20 +297,16 @@ async fn run_screen_loop(
                         );
                         obol_core::ChecklistStatuses::default()
                     });
-                let monthly_spend_thresholds =
-                    obol_core::load_or_init_monthly_spend_thresholds(rules_path).unwrap_or_else(
-                        |err| {
-                            eprintln!(
-                                "warning: rules.yaml could not be read ({err}) — using defaults"
-                            );
-                            obol_core::MonthlySpendThresholds::default()
-                        },
-                    );
+                let monthly_spend_thresholds = obol_core::load_or_init_monthly_spend_thresholds(
+                    rules_path,
+                )
+                .unwrap_or_else(|err| {
+                    eprintln!("warning: rules.yaml could not be read ({err}) — using defaults");
+                    obol_core::MonthlySpendThresholds::default()
+                });
                 let debt_payoff_config = obol_core::load_or_init_debt_payoff_config(rules_path)
                     .unwrap_or_else(|err| {
-                        eprintln!(
-                            "warning: rules.yaml could not be read ({err}) — using defaults"
-                        );
+                        eprintln!("warning: rules.yaml could not be read ({err}) — using defaults");
                         obol_core::DebtPayoffConfig::default()
                     });
 

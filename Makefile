@@ -15,18 +15,9 @@ test:
 audit:
 	cargo audit
 
-# KNOWN BROKEN, PARKED (spec.md decision D24) — not a working recipe.
-# Ignored tests that store a Keychain item with an explicit accessibility
-# level (SecAccessControl) fail with errSecMissingEntitlement (-34018)
-# unsigned. Ad-hoc signing with entitlements.plist's keychain-access-groups
-# entitlement (attempted here) makes it worse — the process gets killed
-# outright by the kernel before any code runs. Left in place as a
-# documented starting point for whoever revisits this, not a fix.
+# The Keychain tests are #[ignore]d because they touch the real login
+# Keychain (throwaway items only). The plain write works unsigned.
 # FILTER narrows which tests run, same as cargo test's own filter arg.
 FILTER ?= keychain
 test-keychain:
-	cargo test -p obol-core --lib --no-run
-	@bin=$$(find target/debug/deps -type f -perm +111 -name 'obol_core-*' ! -name '*.d' -print0 | xargs -0 ls -t | head -1); \
-	echo "Signing $$bin"; \
-	codesign --force --sign - --entitlements entitlements.plist $$bin; \
-	$$bin --ignored $(FILTER)
+	cargo test -p obol-core --lib -- --ignored $(FILTER)

@@ -1,9 +1,8 @@
 //! Emergency fund coverage (spec §13.1 Type A, D36) — the first slice
 //! of recommendation tracking (FR23–FR28). A pure function over
-//! already-persisted `AccountRecord` data, no schema/provider changes,
-//! same shape as `holdings.rs`'s `classify`/`bucket` (D31): this module
-//! never touches a file or a snapshot directly, only the `&[AccountRecord]`
-//! slice and threshold config it's given.
+//! already-persisted `AccountRecord` data, no schema/provider changes:
+//! this module never touches a file or a snapshot directly, only the
+//! `&[AccountRecord]` slice and threshold config it's given.
 
 use serde::{Deserialize, Serialize};
 

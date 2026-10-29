@@ -1,43 +1,26 @@
-//! macOS Keychain storage (spec §4, §8, D20). Stores two kinds of
-//! secrets, both under this app's own service name so they're inspectable
-//! and revocable independent of any real bank password:
-//!   - Per-Item Plaid access tokens (§8), keyed by source id.
-//!   - This app's own Plaid client_id/secret pair (D20) — a single
-//!     app-level credential, not per-source.
+//! macOS Keychain storage for the SimpleFIN Access URL (spec §4, §8). The
+//! URL embeds Basic Auth credentials, so it lives here and never in
+//! `sources.yaml`.
 //!
-//! **Confidence note:** `read`/`delete` use `security-framework`'s
-//! high-level `passwords` module, confirmed working against a real
-//! Keychain, unsigned binary included. `store` uses
-//! `set_generic_password_options` with a `SecAccessControl` built from
-//! `ProtectionMode::AccessibleWhenUnlockedThisDeviceOnly` — this is the
-//! documented, high-level way to set this accessibility level (§4, §8),
-//! not a raw-FFI guess, but **this path is currently broken and parked,
-//! not fixed (decision D24, §16)**: an unsigned binary fails with
-//! `errSecMissingEntitlement` (-34018), and ad-hoc-signing
-//! (`codesign --sign -`) with a `keychain-access-groups` entitlement —
-//! the fix attempted first — made it *worse*, getting the process killed
-//! outright by the kernel (AMFI) before any code runs. Root cause not
-//! fully confirmed. `entitlements.plist` (repo root) and `make
-//! test-keychain` are left in place as a documented, known-non-working
-//! starting point for whoever revisits this, not a working recipe.
-//! `read`/`delete` never hit this, since they don't request an
-//! ACL-scoped item — only `store` is affected. Not calling
-//! `set_access_synchronized` explicitly: `ThisDeviceOnly` protection
-//! classes are categorically excluded from Keychain sync by Apple's own
-//! semantics, so setting it separately would be redundant at best.
+//! Writes are a plain generic-password write, without a
+//! `SecAccessControl`/ThisDeviceOnly attribute: that attribute failed for
+//! unsigned binaries (`errSecMissingEntitlement`, decision D24), and the
+//! URL needs to be storable today. The item still lives in the login
+//! Keychain. `read`/`delete` never hit that problem.
 
 use secrecy::{ExposeSecret, Secret};
-use security_framework::access_control::{ProtectionMode, SecAccessControl};
 use security_framework::passwords::{
-    delete_generic_password, get_generic_password, set_generic_password_options, PasswordOptions,
+    delete_generic_password, get_generic_password, set_generic_password,
 };
 use thiserror::Error;
 
-/// This app's Keychain service name — all entries live under this, so
-/// they're all inspectable/deletable together and scoped to this app
-/// specifically. Revisit if/when real app packaging picks a bundle
-/// identifier (task 27) — this is a placeholder until then.
+/// Kept as the original service name: items are stored under it, so
+/// renaming would orphan an already-linked Access URL.
 const SERVICE_NAME: &str = "com.obol.plaid";
+
+/// The one SimpleFIN Access URL (it covers every account, so it isn't
+/// keyed by source). It embeds Basic Auth credentials.
+const SIMPLEFIN_ACCESS_URL_ACCOUNT: &str = "simplefin_access_url";
 
 #[derive(Debug, Error)]
 pub enum KeychainError {
@@ -47,22 +30,8 @@ pub enum KeychainError {
     InvalidUtf8,
 }
 
-/// Stores (creates or updates) a Keychain item with
-/// `kSecAttrAccessibleWhenUnlockedThisDeviceOnly` explicitly set (§4,
-/// §8) via `PasswordOptions`/`SecAccessControl` — the documented
-/// high-level way to control this attribute, confirmed against docs.rs
-/// rather than assumed.
-fn store(account: &str, value: &Secret<String>) -> Result<(), KeychainError> {
-    let access_control = SecAccessControl::create_with_protection(
-        Some(ProtectionMode::AccessibleWhenUnlockedThisDeviceOnly),
-        0,
-    )?;
-
-    let mut options = PasswordOptions::new_generic_password(SERVICE_NAME, account);
-    options.set_access_control(access_control);
-
-    set_generic_password_options(value.expose_secret().as_bytes(), options)?;
-
+fn store_plain(account: &str, value: &Secret<String>) -> Result<(), KeychainError> {
+    set_generic_password(SERVICE_NAME, account, value.expose_secret().as_bytes())?;
     Ok(())
 }
 
@@ -77,104 +46,55 @@ fn delete(account: &str) -> Result<(), KeychainError> {
     Ok(())
 }
 
-fn access_token_account(source_id: &str) -> String {
-    format!("plaid_access_token:{source_id}")
+pub fn store_simplefin_access_url(url: &Secret<String>) -> Result<(), KeychainError> {
+    store_plain(SIMPLEFIN_ACCESS_URL_ACCOUNT, url)
 }
 
-/// Stores a Plaid access token for one source (§8). Overwrites any
-/// existing entry for the same `source_id`.
-pub fn store_plaid_access_token(
-    source_id: &str,
-    token: &Secret<String>,
-) -> Result<(), KeychainError> {
-    store(&access_token_account(source_id), token)
+pub fn read_simplefin_access_url() -> Result<Secret<String>, KeychainError> {
+    read(SIMPLEFIN_ACCESS_URL_ACCOUNT)
 }
 
-pub fn read_plaid_access_token(source_id: &str) -> Result<Secret<String>, KeychainError> {
-    read(&access_token_account(source_id))
-}
-
-/// Deletes a source's access token — called as part of the confirmed
-/// remove flow (§10.1, task 20), after `/item/remove` has already
-/// released the Item on Plaid's side.
-pub fn delete_plaid_access_token(source_id: &str) -> Result<(), KeychainError> {
-    delete(&access_token_account(source_id))
-}
-
-/// Stores this app's own Plaid client_id/secret pair (D20) — not a
-/// per-source credential, a single app-level entry.
-pub fn store_plaid_app_credentials(
-    client_id: &Secret<String>,
-    secret: &Secret<String>,
-) -> Result<(), KeychainError> {
-    store("plaid_client_id", client_id)?;
-    store("plaid_secret", secret)?;
-    Ok(())
-}
-
-pub fn read_plaid_app_credentials() -> Result<(Secret<String>, Secret<String>), KeychainError> {
-    let client_id = read("plaid_client_id")?;
-    let secret = read("plaid_secret")?;
-    Ok((client_id, secret))
+/// Writes and deletes a throwaway item. Linking calls this *before*
+/// claiming the Setup Token, because a claim is one-time: if the Keychain
+/// then rejected the write, the Access URL would be lost.
+pub fn probe_keychain_writable() -> Result<(), KeychainError> {
+    const PROBE_ACCOUNT: &str = "write_probe";
+    store_plain(PROBE_ACCOUNT, &Secret::new("probe".to_string()))?;
+    delete(PROBE_ACCOUNT)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    // These need a real Keychain, so they're #[ignore]d like the Plaid
-    // Sandbox tests. `access_token_round_trips` and
-    // `app_credentials_round_trip` call store_plaid_access_token /
-    // store_plaid_app_credentials, which are currently broken/parked
-    // (see the module doc comment, D24, §16) — they will fail with
-    // errSecMissingEntitlement (or worse, get killed, if run against a
-    // binary signed per the parked entitlements.plist attempt) until
-    // that's resolved. `reading_a_nonexistent_entry_is_an_error` only
-    // reads, so it's unaffected and works with plain `cargo test
-    // -p obol-core --lib -- --ignored keychain`.
+    // These need a real Keychain, so they're #[ignore]d. Run them with
+    // `cargo test -p obol-core --lib -- --ignored keychain`.
 
+    // A throwaway account name, so this can never touch a real stored URL.
     #[test]
     #[ignore = "requires a real macOS Keychain"]
-    fn access_token_round_trips() {
-        let source_id = "test_source_keychain_roundtrip";
-        let token = Secret::new("test-access-token-12345".to_string());
+    fn plain_store_round_trips_unsigned() {
+        let account = "simplefin_access_url_test";
+        let url = Secret::new("https://user:pass@bridge.example/simplefin".to_string());
 
-        store_plaid_access_token(source_id, &token).expect("store should succeed");
+        store_plain(account, &url).expect("plain store should succeed unsigned");
 
-        let read_back = read_plaid_access_token(source_id).expect("read should succeed");
-        assert_eq!(read_back.expose_secret(), token.expose_secret());
+        let read_back = read(account).expect("read should succeed");
+        assert_eq!(read_back.expose_secret(), url.expose_secret());
 
-        delete_plaid_access_token(source_id).expect("delete should succeed");
-
-        let after_delete = read_plaid_access_token(source_id);
-        assert!(
-            after_delete.is_err(),
-            "expected an error reading a deleted entry, got Ok"
-        );
+        delete(account).expect("delete should succeed");
+        assert!(read(account).is_err());
     }
 
     #[test]
     #[ignore = "requires a real macOS Keychain"]
-    fn app_credentials_round_trip() {
-        let client_id = Secret::new("test-client-id".to_string());
-        let secret = Secret::new("test-secret".to_string());
-
-        store_plaid_app_credentials(&client_id, &secret).expect("store should succeed");
-
-        let (read_client_id, read_secret) =
-            read_plaid_app_credentials().expect("read should succeed");
-        assert_eq!(read_client_id.expose_secret(), client_id.expose_secret());
-        assert_eq!(read_secret.expose_secret(), secret.expose_secret());
-
-        // Cleanup so repeated runs stay idempotent.
-        delete("plaid_client_id").ok();
-        delete("plaid_secret").ok();
+    fn probe_reports_a_writable_keychain() {
+        probe_keychain_writable().expect("probe should succeed");
     }
 
     #[test]
     #[ignore = "requires a real macOS Keychain"]
     fn reading_a_nonexistent_entry_is_an_error() {
-        let result = read_plaid_access_token("definitely_does_not_exist_source_id");
-        assert!(result.is_err());
+        assert!(read("definitely_does_not_exist_account").is_err());
     }
 }

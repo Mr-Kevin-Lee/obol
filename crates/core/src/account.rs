@@ -16,10 +16,10 @@ pub trait Account: Send + Sync + std::fmt::Debug {
     fn net_worth_contribution(&self) -> f64;
 
     /// This account's individual positions, if it has any (spec D31) —
-    /// `None` for every account type except a holdings-bearing one
-    /// (currently only Vanguard Brokerage, via `StatementImportProvider`).
-    /// Default-implemented so no existing `Account` impl needs to change
-    /// just because this method exists.
+    /// `None` for every account type except a holdings-bearing one (no
+    /// provider produces these any more). Default-implemented so no
+    /// existing `Account` impl needs to change just because this method
+    /// exists.
     fn holdings(&self) -> Option<&[Holding]> {
         None
     }
@@ -27,12 +27,9 @@ pub trait Account: Send + Sync + std::fmt::Debug {
 
 /// One position within a holdings-bearing account (spec D31) — e.g. a
 /// single line from a brokerage statement's Holdings/Positions table.
-/// Deliberately carries no asset-class label itself (cash vs. ETF vs.
-/// individual stock) — that classification is a pure, independently
-/// testable function over already-extracted `description` text
-/// (`crate::holdings::classify`), not baked into parsing or persistence,
-/// so reclassifying later never requires a new statement parse or a
-/// schema migration.
+/// No provider produces these any more (SimpleFIN reports account-level
+/// balances only); the type stays so snapshots written earlier, which
+/// carry holdings, still load.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Holding {
     pub symbol: String,

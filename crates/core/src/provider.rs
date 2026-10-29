@@ -1,9 +1,9 @@
 //! Source-agnostic, provider-swappable connector architecture (spec §10).
 //! `Provider` is the mechanics of *how* to reach a class of source
-//! (Plaid, WebDriver, manual entry); `SourceConfig` is a config-driven
+//! (SimpleFIN, manual entry); `SourceConfig` is a config-driven
 //! declaration of *one real-world account group*. Neither knows about
 //! the other's specifics — the snapshot engine, retry logic, storage,
-//! and dashboard only ever see this trait, never a Plaid-specific type.
+//! and dashboard only ever see this trait, never a SimpleFIN-specific type.
 
 use std::collections::HashMap;
 
@@ -15,14 +15,14 @@ use thiserror::Error;
 use crate::{Account, Category};
 
 /// A config-driven declaration of one real-world account (D23 — one
-/// Plaid Item can have several accounts, so this is per-account, not
-/// per-login), as loaded from `sources.yaml` (task 11 owns the CRUD;
+/// SimpleFIN Access URL covers several accounts, so this is per-account,
+/// not per-login), as loaded from `sources.yaml` (task 11 owns the CRUD;
 /// this is the shared shape both that task and this trait need).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SourceConfig {
     pub id: String,
     /// The key this source is registered under in the provider registry
-    /// (e.g. `"plaid"`, `"webdriver"`, `"manual_entry"`).
+    /// (e.g. `"simplefin"`).
     pub provider: String,
     pub category: Category,
     #[serde(rename = "type")]
@@ -41,9 +41,8 @@ pub struct SourceConfig {
 }
 
 /// Provider-defined, opaque credential value (spec §8, §10). Each
-/// provider interprets the wrapped string however it needs — a Plaid
-/// access token, a JSON-encoded username/password pair for WebDriver, or
-/// a plain balance string for manual entry. Wrapped in `Secret` so it
+/// provider interprets the wrapped string however it needs — a SimpleFIN
+/// Access URL, or a plain balance string for manual entry. Wrapped in `Secret` so it
 /// can't leak via an accidental `{:?}` (§4).
 pub struct Credentials(pub Secret<String>);
 
@@ -93,13 +92,10 @@ pub trait Provider: Send + Sync {
 pub type ProviderFactory = Box<dyn Fn() -> Box<dyn Provider> + Send + Sync>;
 
 /// Maps a source's `provider:` string to a factory for that provider.
-/// Empty for now, deliberately — `PlaidProvider` exists but needs a
-/// `PlaidClient` built from runtime credentials this zero-argument call
-/// site doesn't have, so the CLI wires it in separately, gated on
-/// whether those credentials are actually configured; `manual_entry`/
-/// `webdriver` don't exist yet. This function defines the registry
-/// mechanism itself; the contract is tested against fakes registered ad
-/// hoc in tests, not real providers.
+/// Empty on purpose: real providers register themselves where they are
+/// wired in (`register_simplefin`); `manual_entry` doesn't exist yet. This
+/// function defines the registry mechanism itself; the contract is tested
+/// against fakes registered ad hoc in tests, not real providers.
 pub fn provider_registry() -> HashMap<&'static str, ProviderFactory> {
     HashMap::new()
 }

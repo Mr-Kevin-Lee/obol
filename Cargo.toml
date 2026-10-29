@@ -5,3 +5,10 @@ members = ["crates/core", "crates/cli"]
 [workspace.package]
 version = "0.1.0"
 edition = "2021"
+
+# Smaller objects and faster links; backtraces still carry file:line.
+[profile.dev]
+debug = "line-tables-only"
+
+[profile.dev.package."*"]
+debug = false

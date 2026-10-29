@@ -82,10 +82,9 @@ pub fn edit_source(path: &Path, id: &str, mut updated: SourceConfig) -> Result<(
     write_atomically(path, &SourcesFile { sources })
 }
 
-/// Removes a source by id. Callers are responsible for any
-/// provider-specific cleanup that must happen first (e.g. Plaid's
-/// `/item/remove` + Keychain deletion, §10.1) — this function only
-/// touches `sources.yaml` itself.
+/// Removes a source by id. This only touches `sources.yaml`; a source's
+/// SimpleFIN account stays on the Bridge and its Access URL stays in the
+/// Keychain (other sources share it).
 pub fn remove_source(path: &Path, id: &str) -> Result<(), SourcesError> {
     let mut sources = load_or_init(path)?;
     let index = sources
