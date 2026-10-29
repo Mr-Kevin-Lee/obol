@@ -929,3 +929,41 @@ untouched throughout — their deletion is v0.3d, not this phase.
     `$0`; click Refresh against real `~/Statements` and confirm a new
     snapshot is written and the view updates; run `obol` and confirm
     the TUI behaves exactly as before. Screenshots in the PR.
+
+## Phase W — Transactions, categorization and the spending plan (D44, v0.6)
+
+Obol takes over Simplifi's categorized transactions and monthly spending
+plan. D44 records why D38's reasons for parking this no longer hold. Built
+against fixture transactions in parallel with #37, on a `transactions`
+branch stacked on `tauri-desktop`. New logic lives in new files, so the
+only file shared with #37 is `crates/core/src/lib.rs`.
+
+Stage 1 runs as four parallel streams, each in its own worktree and branch,
+cut from task 111b's contract commit and owning disjoint files.
+
+111. `docs/spec.md` — D44 (supersedes D38); §1 and §3; §11.4 transaction
+    data model and categorization; §13.6 spending-plan model; §14 two new
+    screens; §16 v0.6. This Phase W entry. No code.
+111b. The contract commit: every shared type and signature, compiling, with
+    stub bodies; `lib.rs` wiring for every new module; the shared
+    `atomic_write`, `YearMonth` and date (de)serialization, implemented and
+    tested because every stream depends on them; the desktop view-model
+    types and their TypeScript mirror.
+112. *storage stream* — `transaction_storage.rs`: month-file storage,
+    upsert on (`source_id`, `id`), `0600`/`0700`.
+113. *storage stream* — `merchant.rs`: merchant-key normalization and
+    display names, pinned by a table of realistic bank descriptions.
+114. *categorize stream* — `categorize.rs`, `merchant_rules_storage.rs`:
+    category list, built-in defaults with word-prefix matching, rules
+    storage, transfer pairing, resolution order.
+115. *plan stream* — `spending_plan.rs`, `plan_storage.rs`: plan storage,
+    series suggestions, the month plan.
+116. Integration — desktop view assembly and commands, with a write mutex;
+    transfer pairing reads adjacent months.
+117. Integration — Aug–Oct 2026 fixture transactions, rules and plan, with
+    fixture tests asserting the plan's exact figures.
+118. *ui stream* — tabs, a shared month selector, the Transactions screen.
+119. *ui stream* — the Spending plan screen.
+120. Verify the integrated phase: tests, mutation passes, the browser pane
+    against real serialized backend output, all gates.
+121. Simplifi CSV import — gated on the user's export file.

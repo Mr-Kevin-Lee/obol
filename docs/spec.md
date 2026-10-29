@@ -23,8 +23,11 @@ separately-phased feature (v0.5, §16) — not part of v0.1's initial scope.
 
 A locally-run macOS dashboard that snapshots balances across checking, brokerage,
 retirement, and credit accounts, then displays current net worth and per-account
-detail. Complements Quicken Simplifi — Simplifi owns transaction-level budgeting,
-this tool owns "what is my financial health right now."
+detail. Originally built to complement Quicken Simplifi — Simplifi owning
+transaction-level budgeting, this tool owning "what is my financial health right
+now." **Revised by D44:** obol now replaces Simplifi for that too, adding
+categorized transactions and a monthly spending plan (§11.4, §13.6) alongside the
+balance and net-worth view.
 
 **Primary user:** single user, run on-demand (later: on a schedule).
 
@@ -140,7 +143,10 @@ this tool owns "what is my financial health right now."
 
 ## 3. Non-goals (v1)
 
-- Not a transaction-level budgeting tool (Simplifi's job).
+- ~~Not a transaction-level budgeting tool (Simplifi's job).~~ **Withdrawn by
+  D44** — transaction categorization and a monthly spending plan are now in
+  scope (§11.4, §13.6, v0.6). Investment advice, forecasting and tax
+  computation stay out, below.
 - Not a multi-user or cloud-hosted product.
 - Not a place raw bank credentials (passwords) are ever persisted to disk —
   see §4 for the one narrow, documented exception.
@@ -1021,6 +1027,57 @@ without invalidating historical snapshots.
   newer schema version was skipped, rather than failing to load the
   snapshot at all.
 
+### 11.4 Transactions (D44)
+
+Transactions are a **separate store from snapshots**, not a field on them.
+Snapshots stay balance-only and PII-free (§11.1, FR12 unchanged); a
+transaction's description can name a person (a Zelle recipient, a Venmo
+memo), so transactions are a new sensitive file class instead.
+
+```rust
+pub struct Transaction {
+    pub source_id: String,   // the obol source (sources.yaml id) it belongs to
+    pub id: String,          // the provider's id, unique within that source
+    pub posted: Date,        // stored as "YYYY-MM-DD"
+    pub amount: f64,         // signed: negative is money out (D16's f64)
+    pub description: String, // raw, exactly as the provider gave it
+}
+```
+
+- **Posted only.** Providers return posted transactions and skip pending
+  ones, whose amounts and descriptions can change on posting (#38). There is
+  no `pending` field, so storage can't hold one.
+- **Provider-neutral.** A `TransactionProvider` trait, separate from
+  `Provider` (§10), so balance-only providers needn't implement it.
+  SimpleFIN's implementation arrives with #38, after #37.
+- **Storage.** One JSON file per calendar month,
+  `transactions/YYYY-MM.json`, upserted on (`source_id`, `id`). Same
+  protections as every other file here (§4): atomic temp-file-plus-rename
+  writes, `0600` files in a `0700` directory. JSON rather than SQLite because
+  the volume is a few hundred rows a month and SQLite would add a C
+  dependency (§4).
+- **Never logged.** No description or amount appears in a `tracing` line, at
+  any level, matching §4's rule for balances.
+
+**Categorization** is computed when transactions are read, never stored on
+them, so editing a rule re-categorizes the past as well as the future. Each
+transaction gets a **merchant key** (its description uppercased, with
+payment-processor prefixes, store numbers, card digits, phone numbers, URLs
+and trailing city/state/zip stripped, then aliased: `AMZN` → `AMAZON`), and
+then a category, first match wins:
+
+1. A rule in `merchant_rules.yaml` — written by an edit in the app, or seeded
+   by the one-time Simplifi import.
+2. Transfer pairing: an equal and opposite amount on a different source
+   within 5 days, each transaction paired at most once. Tagged `Transfer`.
+3. Built-in defaults: common merchants, plus transfer keywords such as
+   `AUTOPAY` and `PAYMENT THANK YOU`.
+4. `Uncategorized`.
+
+Categories are flat strings seeded from Simplifi's top-level list; an
+imported `Parent:Child` category maps to its parent. No LLM or network call
+is ever made in this path (#35).
+
 ## 12. Net worth & breakdown logic
 
 - **Net worth** = sum(asset balances) − sum(liability balances), computed only
@@ -1282,6 +1339,41 @@ Apple Card statements both show the account's APR in plain text, so
 straight into `rules.yaml`'s `debt_payoff.interest_rates`, closing the
 manual-entry gap this section originally described — see D42.
 
+### 13.6 The monthly spending plan (D44)
+
+A month's plan is a pure function of that month's categorized transactions
+(§11.4), `plan.yaml`, and today's date. It reproduces Simplifi's arithmetic
+exactly — the screenshots that prompted D44 reconcile to the cent.
+
+- **Recurring series** — the one mechanism behind both bills and income.
+  Each has a merchant key, a kind (`bill` or `income`), an expected amount
+  (a positive magnitude) and a due day. Obol *suggests* a series when a
+  merchant appears in at least 2 distinct months, always with the same sign,
+  with an amount spread within 20% and a due-day spread within 7 days. You
+  confirm or dismiss each suggestion; nothing becomes a series on its own.
+  - In month M a series counts at its **actual** total if a matching
+    transaction posted in M, otherwise at its **expected** amount.
+  - Status: **Paid** (matched), **Upcoming**, or **Past due** (the current
+    month, the due day already passed, no match).
+- **Income** = income-series values, plus `Income`-category transactions not
+  matched to any series.
+- **Bills** = bill-series values. A transaction matched to a series never
+  also counts as category spending.
+- **Spent**, per category = the negated sum of that category's transactions,
+  excluding transfers, series matches and `Income`. Refunds therefore reduce
+  it.
+- **Planned** = the sum, over categories with a monthly target, of
+  max(target, spent) — an unspent target is still committed money.
+- **Other** = the sum of spent over categories without a target, including
+  `Uncategorized`, so unreviewed spending never silently disappears.
+- **Left this month** = Income − Bills − Planned − Other.
+- **Per day** = Left ÷ the days remaining after today; current month only,
+  omitted on its last day.
+
+Deliberately not in v0.6: savings goals, subcategories, carrying an
+overspend into the next month, and per-transaction category overrides (an
+edit always writes a merchant rule).
+
 ## 14. Dashboard UI
 
 Four screens: the **net worth dashboard** (default view), a **Sources**
@@ -1362,6 +1454,26 @@ single-key bindings.
 - Read-only — thresholds are edited by hand in `rules.yaml`, same as
   every other threshold in §13 today (no in-TUI threshold-editing UI
   exists yet for any recommendation type).
+
+**Transactions screen (§11.4, D44, desktop app only):**
+- A month selector shared with the Spending plan screen; it opens on the
+  current month.
+- The month's total spent, then a category breakdown as sorted horizontal
+  bars (amount and percentage — never colour alone), then the transaction
+  list, newest first: merchant, account, category, amount, date.
+- Every transaction's category is editable in place. An edit writes a
+  merchant rule, so every past and future transaction from that merchant
+  follows it.
+- An **Uncategorized** filter, with a count, is the review queue.
+
+**Spending plan screen (§13.6, D44, desktop app only):**
+- Income, Bills, Planned and Other for the month, then **Left this month**
+  and, for the current month, per day — as figures with a bar, not a donut,
+  and labelled "Overspent" in text when negative.
+- Bills and income series with their status (Paid, Upcoming, Past due).
+- Each category target as "spent $X of $Y", with an inline editor; an
+  overspend says so in text, not only in colour.
+- Suggested series to confirm or dismiss.
 
 ## 15. Tech stack (Rust — security-first, decision D6)
 
@@ -1467,6 +1579,13 @@ is verified separately, not forced into that same red-green loop (§5).
     plan probability of success and similar advisor-computed figures, plus
     the staleness indicator for values that aren't refreshed by a snapshot
     run.
+
+- **v0.6 (transactions and the spending plan, D44):** categorized
+  transactions (§11.4) and a monthly spending plan (§13.6) in the desktop
+  app. Built first against fixture transactions, in parallel with the
+  SimpleFIN migration (#37); real data arrives with SimpleFIN's transaction
+  feed (#38), and history before SimpleFIN's ~90-day window comes from a
+  one-time Simplifi CSV import that also seeds the merchant rules.
 
 ## 17. Decisions log
 
@@ -2200,7 +2319,9 @@ Previously open questions, now resolved:
   `multi_select_accounts` toggle conventions rather than introducing
   new ones.
 - **D38 — Transaction-level budgeting (replacing Quicken Simplifi):
-  explored, explicitly parked, not built** (§3): raised as a possible
+  explored, explicitly parked, not built** (§3). **Superseded by D44**, which
+  builds it, on SimpleFIN transactions and local categorization rather than the
+  statement-parsing and Plaid-Transactions routes weighed here. Raised as a possible
   extension — using the already-parsed Chase and Apple Card statements
   to categorize spend the way Simplifi does today, rather than just
   extracting one balance figure per statement. This would directly
@@ -2447,3 +2568,42 @@ Previously open questions, now resolved:
   seam is an `OBOL_STORAGE_DIR` override pointed at a committed fixture,
   not a `MockProvider`: the view's only input is a snapshot, so there is
   nothing a fake provider would add beyond a thing to delete later.
+- **D44 — Obol replaces Simplifi for budgeting: categorized transactions
+  and a monthly spending plan** (§1, §3, §11.4, §13.6, §14, §16 v0.6;
+  **supersedes D38**, withdraws §3's "not a transaction-level budgeting
+  tool" non-goal). Prompted by screenshots of Simplifi's two features worth
+  keeping — a categorized monthly transaction list, and a spending plan of
+  income, bills, planned spend and other spend rolling up to "left this
+  month" — whose arithmetic this spec now reproduces exactly (§13.6).
+  **Why D38's reasons for parking no longer hold:** D38 found the two hard
+  halves to be itemized-transaction parsing (per-institution PDF tables) and
+  categorization with no training data. SimpleFIN removes the first: it
+  delivers transactions as structured data (#38), so nothing is parsed from
+  PDFs. The second is answered two ways — the user's own Simplifi history,
+  exported once to CSV, seeds merchant rules from years of transactions
+  they already categorized by hand; and categorization is deterministic
+  local rules (#35), never an LLM or network call, so a wrong category is
+  fixed once and stays fixed.
+  **Shape of the design.** Transactions are a separate store from snapshots
+  (§11.4), so FR12's PII-free snapshots are untouched; transaction files are
+  a new sensitive class with the same `0600` protection and no logging.
+  Categories are resolved at read time from rules, so an edit applies to
+  the past as well as the future. Transfers between the user's own accounts
+  — a card payment above all — are detected and excluded, since otherwise
+  every purchase on a card is counted twice: once on the card, once as the
+  payment. Bills and income share one recurring-series mechanism that obol
+  suggests and the user confirms (§13.6). Pending transactions are excluded
+  for now (#38), trading a 1–3 day lag for never showing an amount that later
+  changes.
+  **What's deliberately out of v0.6:** savings goals, subcategories,
+  carrying an overspend forward, and per-transaction category overrides.
+  Each is a real Simplifi feature; none is needed for the plan's arithmetic
+  to be right, which is the bar for this slice.
+  **Open-data seed, considered and deferred:** OpenStreetMap's Name
+  Suggestion Index (3-Clause BSD) maps chain brands to OSM tags, which map
+  onto budget categories (`amenity=fuel` → Auto & Transport). It is a good
+  fallback below the user's own rules and is planned as a follow-up; the
+  built-in lookup matches by word-prefix against a table precisely so a
+  large generated table can replace the hand-picked one without a code
+  change. Public MCC lists were rejected for now: SimpleFIN's standard
+  schema carries no MCC (#35).
