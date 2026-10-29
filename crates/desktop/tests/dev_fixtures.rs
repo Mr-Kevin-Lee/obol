@@ -82,6 +82,18 @@ fn typical_fixture_should_compute_net_worth_from_ok_accounts_only() {
 }
 
 #[test]
+fn typical_fixture_should_subtotal_each_group_from_ok_accounts() {
+    // Assets exclude the failed Fidelity source; the two subtotals
+    // reconcile with the net worth above: 60,730.25 − 4,348.25 = 56,382.
+    let view = dashboard("typical");
+
+    assert_eq!(
+        (view.assets_subtotal, view.liabilities_subtotal),
+        (60_730.25, 4_348.25)
+    );
+}
+
+#[test]
 fn typical_fixture_should_diff_against_the_previous_week() {
     let delta = dashboard("typical")
         .delta

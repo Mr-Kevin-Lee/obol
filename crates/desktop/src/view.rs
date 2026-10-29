@@ -26,6 +26,12 @@ pub struct DashboardView {
     pub net_worth: NetWorthView,
     pub assets: Vec<AccountView>,
     pub liabilities: Vec<AccountView>,
+    /// Each group's total over status-OK balances only, matching the
+    /// TUI's panel titles (`crates/cli/src/dashboard.rs`). Liabilities are
+    /// positive amounts owed; the two reconcile with `net_worth` as
+    /// assets minus liabilities.
+    pub assets_subtotal: f64,
+    pub liabilities_subtotal: f64,
     /// `None` on a first-ever run, or when either snapshot's net worth
     /// isn't computable — there's nothing meaningful to diff against.
     pub delta: Option<DeltaView>,
@@ -99,6 +105,8 @@ pub fn build(snapshot: &Snapshot, previous: Option<&Snapshot>) -> DashboardView 
         created_at: snapshot.created_at.clone(),
         delta: delta(net_worth, previous),
         net_worth: net_worth.into(),
+        assets_subtotal: subtotal(&assets),
+        liabilities_subtotal: subtotal(&liabilities),
         assets,
         liabilities,
     }
@@ -129,6 +137,19 @@ fn partition(records: &[AccountRecord]) -> (Vec<AccountView>, Vec<AccountView>) 
     }
 
     (assets, liabilities)
+}
+
+/// Filters on status rather than on whether a balance is present: a
+/// failed or unrecognized fetch can still carry a stale figure, which
+/// isn't one to add in. Same rule as the TUI's panel titles.
+fn subtotal(accounts: &[AccountView]) -> f64 {
+    accounts
+        .iter()
+        .filter(|account| account.status == StatusView::Ok)
+        .filter_map(|account| account.balance)
+        // Folded from +0.0 rather than `.sum()`, whose f64 identity is
+        // -0.0: an empty group would otherwise display as "-$0.00".
+        .fold(0.0, |total, balance| total + balance)
 }
 
 fn account_view(record: &AccountRecord) -> AccountView {
@@ -256,6 +277,93 @@ mod tests {
                 .collect(),
         );
         assert_eq!(grouped, (vec!["chase"], vec!["apple"]));
+    }
+
+    #[test]
+    fn should_subtotal_ok_balances_per_group() {
+        let view = build(
+            &snapshot_of(json!([
+                asset("chase", 1000.0),
+                asset("ally", 500.0),
+                liability("apple", 200.0),
+            ])),
+            None,
+        );
+
+        assert_eq!(
+            (view.assets_subtotal, view.liabilities_subtotal),
+            (1500.0, 200.0)
+        );
+    }
+
+    #[test]
+    fn should_report_positive_zero_subtotal_for_an_empty_group() {
+        // f64's `Sum` starts from -0.0, which the UI's currency formatter
+        // renders as "-$0.00" under an empty Liabilities group.
+        let view = build(&snapshot_of(json!([asset("chase", 1000.0)])), None);
+
+        assert!(view.liabilities_subtotal.is_sign_positive());
+    }
+
+    #[test]
+    fn should_exclude_failed_account_from_subtotal_even_with_a_balance() {
+        // A failed fetch can still carry a stale balance; it isn't a
+        // trustworthy figure to add in (the TUI filters on status, not on
+        // whether a balance happens to be present).
+        let stale = json!({
+            "account_key": "sha256:a",
+            "source_id": "vanguard",
+            "institution": "Vanguard",
+            "category": "asset",
+            "type": "brokerage",
+            "balance": 999.0,
+            "currency": "USD",
+            "status": "error",
+            "error_message": "boom",
+        });
+
+        let view = build(&snapshot_of(json!([asset("chase", 1000.0), stale])), None);
+
+        assert_eq!(view.assets_subtotal, 1000.0);
+    }
+
+    #[test]
+    fn should_exclude_unknown_status_account_from_subtotal() {
+        let future = json!({
+            "account_key": "sha256:a",
+            "source_id": "vanguard",
+            "institution": "Vanguard",
+            "category": "asset",
+            "type": "brokerage",
+            "balance": 999.0,
+            "currency": "USD",
+            "status": "partially_settled",
+        });
+
+        let view = build(&snapshot_of(json!([asset("chase", 1000.0), future])), None);
+
+        assert_eq!(view.assets_subtotal, 1000.0);
+    }
+
+    #[test]
+    fn should_treat_missing_balance_as_zero_in_subtotal() {
+        let no_balance = json!({
+            "account_key": "sha256:a",
+            "source_id": "ally",
+            "institution": "Ally",
+            "category": "asset",
+            "type": "checking",
+            "balance": null,
+            "currency": "USD",
+            "status": "ok",
+        });
+
+        let view = build(
+            &snapshot_of(json!([asset("chase", 1000.0), no_balance])),
+            None,
+        );
+
+        assert_eq!(view.assets_subtotal, 1000.0);
     }
 
     #[test]
