@@ -4,6 +4,7 @@
 //! core's output into a shape the webview can render and nothing more,
 //! which is what keeps D43's "no logic rewrite" honest.
 
+pub mod budget;
 pub mod dashboard;
 pub mod view;
 

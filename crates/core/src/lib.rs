@@ -29,6 +29,18 @@ mod statement_import_storage;
 mod storage;
 mod threshold_band;
 
+// D44 (Phase W). One block at the end, out of alphabetical order, so this
+// branch's edits here can't overlap #37's when the two merge; sort them in
+// afterwards.
+mod atomic_write;
+mod categorize;
+mod merchant;
+mod merchant_rules_storage;
+mod plan_storage;
+mod spending_plan;
+mod transaction;
+mod transaction_storage;
+
 pub use account::{Account, AccountStatus, Asset, Holding, Liability};
 pub use checklist::{
     completion_summary, status_for, ChecklistItem, ChecklistItemStatus, ChecklistStatuses,
@@ -91,3 +103,25 @@ pub use statement_import_storage::{
 };
 pub use storage::{load_recent_snapshots, load_snapshot, save_snapshot, StorageError};
 pub use threshold_band::ThresholdBand;
+
+// D44 (Phase W); see the note on the module list above.
+pub use categorize::{
+    available_categories, categorize, CategorizedTransaction, INCOME, TRANSFER, UNCATEGORIZED,
+};
+pub use merchant::{display_name, merchant_key};
+pub use merchant_rules_storage::{
+    load_or_init_merchant_rules, set_merchant_category, MerchantRules, MerchantRulesError,
+};
+pub use plan_storage::{load_or_init_plan, save_plan, PlanStorageError};
+pub use spending_plan::{
+    compute_month_plan, suggest_series, CategorySpend, MonthPlan, PaymentStatus, PlanConfig,
+    RecurringSeries, SeriesKind, SeriesStatus,
+};
+pub use time::Date;
+pub use transaction::{
+    format_iso_date, parse_iso_date, Transaction, TransactionProvider, YearMonth,
+};
+pub use transaction_storage::{
+    load_transactions, load_transactions_range, save_transactions, SaveSummary,
+    TransactionStorageError,
+};

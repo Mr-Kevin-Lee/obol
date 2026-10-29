@@ -22,6 +22,12 @@ pub struct StorageLayout {
     pub snapshots: PathBuf,
     pub processed_statements: PathBuf,
     pub rules: PathBuf,
+    /// D44: one `YYYY-MM.json` per month (§11.4).
+    pub transactions: PathBuf,
+    /// D44: merchant key → category (§11.4).
+    pub merchant_rules: PathBuf,
+    /// D44: category targets and recurring series (§13.6).
+    pub plan: PathBuf,
 }
 
 impl StorageLayout {
@@ -31,6 +37,9 @@ impl StorageLayout {
             snapshots: root.join("snapshots"),
             processed_statements: root.join("processed_statements.json"),
             rules: root.join("rules.yaml"),
+            transactions: root.join("transactions"),
+            merchant_rules: root.join("merchant_rules.yaml"),
+            plan: root.join("plan.yaml"),
         }
     }
 }
@@ -292,6 +301,9 @@ mod tests {
                 snapshots: "/root/snapshots".into(),
                 processed_statements: "/root/processed_statements.json".into(),
                 rules: "/root/rules.yaml".into(),
+                transactions: "/root/transactions".into(),
+                merchant_rules: "/root/merchant_rules.yaml".into(),
+                plan: "/root/plan.yaml".into(),
             }
         );
     }
