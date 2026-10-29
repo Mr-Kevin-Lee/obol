@@ -84,6 +84,17 @@ pub async fn refresh_dashboard(
     let sources = obol_core::load_or_init(&layout.sources)
         .map_err(|err| format!("sources.yaml could not be loaded: {err}"))?;
 
+    // §6.2: never snapshot an empty source list — the CLI routes this case
+    // to the Sources screen instead. Fetching anyway would save an empty
+    // snapshot that becomes the newest in history, so every later launch
+    // would open on a blank dashboard with the real history hidden behind
+    // it. Returning an error leaves the last good view on screen.
+    if sources.is_empty() {
+        return Err("no sources are configured, so there's nothing to refresh. \
+             Add one with `obol sources` in a terminal."
+            .to_string());
+    }
+
     // Captured before the run saves, matching the TUI: read afterwards,
     // it would be the snapshot this refresh just wrote. Unreadable history
     // only costs the delta, so it degrades to "no previous" rather than
@@ -105,7 +116,8 @@ pub async fn refresh_dashboard(
         view: view::build(&result.snapshot, previous.as_ref()),
         save_warning: result
             .save_error
-            .map(|err| format!("this refresh was not saved to history: {err}")),
+            // Shown on its own as a banner, so phrased as a full sentence.
+            .map(|err| format!("This refresh was not saved to history: {err}")),
     })
 }
 
@@ -432,6 +444,34 @@ mod tests {
             .unwrap();
 
         assert_eq!(result.save_warning, None);
+    }
+
+    #[tokio::test]
+    async fn should_refuse_to_refresh_with_no_sources() {
+        // §6.2: never run a snapshot against an empty source list. The
+        // CLI routes that case away from fetching; refresh must too.
+        let layout = StorageLayout::under(&temp_root("refresh-no-sources"));
+
+        let result = refresh_dashboard(&layout, &fixed_balance_registry(500.0)).await;
+
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn should_not_save_a_snapshot_when_there_are_no_sources() {
+        // An empty snapshot would become the newest in history, so the
+        // next launch would open on a blank dashboard and hide every real
+        // snapshot behind it.
+        let layout = StorageLayout::under(&temp_root("refresh-no-sources-save"));
+
+        let _ = refresh_dashboard(&layout, &fixed_balance_registry(500.0)).await;
+
+        assert_eq!(
+            obol_core::load_recent_snapshots(&layout.snapshots, 10)
+                .unwrap()
+                .len(),
+            0
+        );
     }
 
     #[tokio::test]
