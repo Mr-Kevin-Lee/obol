@@ -49,7 +49,9 @@ pub struct TransactionsView {
     /// Newest first.
     pub transactions: Vec<TransactionRow>,
     pub uncategorized_count: usize,
-    /// For the category picker, in display order.
+    /// For the category picker, in display order. Always contains every
+    /// row's current category, `Income`, `Transfer` and `Uncategorized`
+    /// included, so a picker never lacks the value it's showing.
     pub available_categories: Vec<String>,
 }
 
@@ -71,6 +73,9 @@ pub struct TargetRow {
     pub spent: f64,
     pub target: f64,
     pub overspent: bool,
+    /// `spent` as a percentage of `target`; over 100 when overspent, so
+    /// the UI caps the bar width and relies on `overspent` for the text.
+    pub percentage: f64,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -92,6 +97,10 @@ pub struct SpendingPlanView {
     pub planned: f64,
     pub other: f64,
     pub left: f64,
+    /// Bills + Planned + Other as a percentage of Income — the "left this
+    /// month" bar. Over 100 means overspent. `None` when Income is zero or
+    /// less, where a percentage of it means nothing.
+    pub committed_percentage: Option<f64>,
     /// Current month only, and not on its last day.
     pub per_day: Option<f64>,
     pub series: Vec<SeriesRow>,
@@ -100,7 +109,8 @@ pub struct SpendingPlanView {
     /// Categories without a target, most spent first.
     pub other_categories: Vec<CategoryBar>,
     pub suggestions: Vec<SuggestionRow>,
-    /// For adding a target to a category, in display order.
+    /// For adding a target to a category, in display order. Excludes
+    /// `Income` and `Transfer`, which can't carry a spending target.
     pub available_categories: Vec<String>,
 }
 

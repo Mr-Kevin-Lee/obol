@@ -86,9 +86,13 @@ export interface TransactionRow {
 export interface TransactionsView {
   month: string
   spent_total: number
+  /** Already sorted, most spent first. */
   categories: CategoryBar[]
+  /** Already sorted, newest first. */
   transactions: TransactionRow[]
   uncategorized_count: number
+  /** Display order. Always contains every row's current category,
+   *  'Income', 'Transfer' and 'Uncategorized' included. */
   available_categories: string[]
 }
 
@@ -111,6 +115,9 @@ export interface TargetRow {
   spent: number
   target: number
   overspent: boolean
+  /** spent as a percentage of target; over 100 when overspent — cap the
+   *  bar width and use `overspent` for the text cue. */
+  percentage: number
 }
 
 export interface SuggestionRow {
@@ -129,10 +136,18 @@ export interface SpendingPlanView {
   planned: number
   other: number
   left: number
+  /** Bills + Planned + Other as a percentage of Income — the "left this
+   *  month" bar; over 100 means overspent. null when Income is zero or less. */
+  committed_percentage: number | null
   per_day: number | null
+  /** plan.yaml order. */
   series: SeriesRow[]
+  /** Already sorted, most spent first. */
   targets: TargetRow[]
+  /** Already sorted, most spent first. */
   other_categories: CategoryBar[]
+  /** Already sorted by merchant. */
   suggestions: SuggestionRow[]
+  /** Display order, excluding 'Income' and 'Transfer' (no spending target). */
   available_categories: string[]
 }
