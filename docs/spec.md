@@ -1351,10 +1351,17 @@ exactly — the screenshots that prompted D44 reconcile to the cent.
   merchant appears in at least 2 distinct months, always with the same sign,
   with an amount spread within 20% and a due-day spread within 7 days. You
   confirm or dismiss each suggestion; nothing becomes a series on its own.
+  - A transaction matches a series on merchant key, and only when its sign
+    fits the kind: a bill matches money out, income matches money in. A
+    refund from a bill's payee is therefore ordinary category activity,
+    not a payment of the bill.
   - In month M a series counts at its **actual** total if a matching
     transaction posted in M, otherwise at its **expected** amount.
-  - Status: **Paid** (matched), **Upcoming**, or **Past due** (the current
-    month, the due day already passed, no match).
+  - Status: **Paid** if matched. Unmatched, it's **Past due** in any month
+    before today's, and in today's month once the due day has passed;
+    otherwise **Upcoming**. A due day beyond a short month's end (the 31st
+    in a 30-day month) needs no special case: it can't have passed while
+    that month is still today's.
 - **Income** = income-series values, plus `Income`-category transactions not
   matched to any series.
 - **Bills** = bill-series values. A transaction matched to a series never
