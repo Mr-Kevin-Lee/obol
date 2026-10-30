@@ -29,7 +29,37 @@ const dateTimeFormat = new Intl.DateTimeFormat('en-US', {
 })
 
 export function formatDate(iso: string): string {
-  return dateFormat.format(new Date(iso))
+  // `new Date('2026-10-05')` is UTC midnight, which is still Oct 4 west of
+  // Greenwich; a bare calendar date has to be read as local.
+  const day = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso)
+  return dateFormat.format(day ? new Date(+day[1], +day[2] - 1, +day[3]) : new Date(iso))
+}
+
+const monthFormat = new Intl.DateTimeFormat('en-US', { month: 'long', year: 'numeric' })
+
+/** 'YYYY-MM' → "October 2026". */
+export function formatMonth(month: string): string {
+  const [year, m] = month.split('-').map(Number)
+  return monthFormat.format(new Date(year, m - 1, 1))
+}
+
+const ordinals = new Intl.PluralRules('en-US', { type: 'ordinal' })
+const ordinalSuffix: Record<string, string> = { one: 'st', two: 'nd', few: 'rd', other: 'th' }
+
+/** 15 → "15th". */
+export function formatOrdinal(n: number): string {
+  return `${n}${ordinalSuffix[ordinals.select(n)]}`
+}
+
+/** A percentage as a CSS bar width: an overspend fills the track rather
+ *  than overflowing it, and a negative one (net refunds) stays empty. */
+export function barWidth(p: number): string {
+  return `${Math.min(Math.max(p, 0), 100)}%`
+}
+
+/** 61.234 → "61.2%". */
+export function formatPercentage(p: number): string {
+  return `${p.toFixed(1)}%`
 }
 
 export function formatDateTime(iso: string): string {
