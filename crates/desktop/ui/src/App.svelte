@@ -1,98 +1,50 @@
 <script lang="ts">
-  import { onMount } from 'svelte'
-  import { invoke } from '@tauri-apps/api/core'
-  import AccountGroup from './AccountGroup.svelte'
-  import NetWorthHeader from './NetWorthHeader.svelte'
-  import { formatDateTime } from './format'
-  import type { DashboardView, RefreshResult } from './types'
+  import Dashboard from './Dashboard.svelte'
+  import MonthSelector from './MonthSelector.svelte'
+  import Transactions from './Transactions.svelte'
+  import { currentMonth } from './calendar'
 
-  let view = $state<DashboardView | null>(null)
-  let loading = $state(true)
-  let refreshing = $state(false)
-  let error = $state<string | null>(null)
-  let saveWarning = $state<string | null>(null)
+  type Screen = 'net-worth' | 'transactions' | 'plan'
+  const screens: { id: Screen; label: string }[] = [
+    { id: 'net-worth', label: 'Net worth' },
+    { id: 'transactions', label: 'Transactions' },
+    { id: 'plan', label: 'Spending plan' },
+  ]
 
-  // Opened in a plain browser (e.g. Vite's dev URL) there's no backend to
-  // call; say so rather than surfacing an opaque invoke error.
-  const insideApp = '__TAURI_INTERNALS__' in window
-
-  onMount(async () => {
-    if (!insideApp) {
-      error = 'Not running inside the Obol app. Launch it with `make desktop-dev`.'
-      loading = false
-      return
-    }
-    try {
-      // Disk only: the window opens on the last snapshot instead of
-      // waiting on every provider (D43, superseding D19).
-      view = await invoke<DashboardView | null>('get_dashboard')
-    } catch (e) {
-      error = `Couldn't load your dashboard: ${e}`
-    } finally {
-      loading = false
-    }
-  })
-
-  async function refresh() {
-    refreshing = true
-    error = null
-    saveWarning = null
-    try {
-      const result = await invoke<RefreshResult>('refresh')
-      view = result.view
-      // §9.1: a failed save never hides the fetch, it just gets flagged.
-      saveWarning = result.save_warning
-    } catch (e) {
-      // The last good view stays on screen; the banner says why it's stale.
-      error = `Refresh failed: ${e}`
-    } finally {
-      refreshing = false
-    }
-  }
+  let screen = $state<Screen>('net-worth')
+  // Shared by both budget screens, so switching between them keeps your place.
+  let month = $state(currentMonth())
 </script>
 
 <main>
   <header class="top">
-    <div>
-      <h1>Obol</h1>
-      {#if view}
-        <p class="as-of">As of {formatDateTime(view.created_at)}</p>
-      {/if}
-    </div>
-    <button
-      type="button"
-      onclick={refresh}
-      disabled={!insideApp || loading || refreshing}
-      aria-busy={refreshing}
-    >
-      {refreshing ? 'Refreshing…' : 'Refresh'}
-    </button>
+    <h1>Obol</h1>
+    <nav aria-label="Screens">
+      {#each screens as s (s.id)}
+        <button
+          type="button"
+          class="tab"
+          aria-current={screen === s.id ? 'page' : undefined}
+          onclick={() => (screen = s.id)}
+        >
+          {s.label}
+        </button>
+      {/each}
+    </nav>
   </header>
 
-  {#if error}
-    <div class="banner error" role="alert">{error}</div>
-  {/if}
-  {#if saveWarning}
-    <div class="banner warning" role="status">{saveWarning}</div>
-  {/if}
+  <!-- Hidden rather than unmounted, so a refresh in flight survives a tab switch. -->
+  <div hidden={screen !== 'net-worth'}>
+    <Dashboard />
+  </div>
 
-  {#if loading}
-    <p class="placeholder">Loading…</p>
-  {:else if view}
-    <NetWorthHeader netWorth={view.net_worth} delta={view.delta} />
-    <div class="groups">
-      <AccountGroup title="Assets" subtotal={view.assets_subtotal} accounts={view.assets} />
-      <AccountGroup
-        title="Liabilities"
-        subtotal={view.liabilities_subtotal}
-        accounts={view.liabilities}
-      />
-    </div>
-  {:else if insideApp && !error}
-    <div class="empty">
-      <h2>No snapshots yet</h2>
-      <p>Press Refresh to fetch your first one.</p>
-    </div>
+  {#if screen !== 'net-worth'}
+    <MonthSelector bind:month />
+    {#if screen === 'transactions'}
+      <Transactions {month} />
+    {:else}
+      <p class="placeholder">The spending plan arrives in task 119.</p>
+    {/if}
   {/if}
 </main>
 
@@ -111,6 +63,7 @@
     --positive: #00785a;
     --negative: #b34e00;
     --caution: #9a6a00;
+    --link: #0072b2;
 
     --bg: #f5f5f7;
     --surface: #ffffff;
@@ -127,6 +80,7 @@
       --positive: #2bb58c;
       --negative: #f07a30;
       --caution: #e69f00;
+      --link: #56b4e9;
 
       --bg: #1c1c1e;
       --surface: #2c2c2e;
@@ -161,33 +115,8 @@
     color: var(--text-muted);
   }
 
-  main {
-    max-width: 1040px;
-    margin: 0 auto;
-    padding: 1.5rem 2rem 3rem;
-  }
-
-  .top {
-    display: flex;
-    justify-content: space-between;
-    align-items: flex-start;
-    padding-bottom: 1rem;
-    border-bottom: 1px solid var(--border);
-  }
-
-  h1 {
-    margin: 0;
-    font-size: 1.25rem;
-    font-weight: 600;
-  }
-
-  .as-of {
-    margin: 0.125rem 0 0;
-    font-size: 0.8125rem;
-    color: var(--text-muted);
-  }
-
-  button {
+  /* Shared by every screen. */
+  :global(button) {
     font: inherit;
     font-weight: 500;
     padding: 0.4rem 1rem;
@@ -198,17 +127,35 @@
     cursor: pointer;
   }
 
-  button:disabled {
+  :global(button.secondary) {
+    background: transparent;
+    color: var(--link);
+    border-color: var(--border);
+  }
+
+  :global(button:disabled) {
     opacity: 0.55;
     cursor: default;
   }
 
-  button:focus-visible {
+  :global(button:focus-visible),
+  :global(select:focus-visible),
+  :global(input:focus-visible) {
     outline: 2px solid var(--sky-blue);
     outline-offset: 2px;
   }
 
-  .banner {
+  :global(select),
+  :global(input) {
+    font: inherit;
+    color: var(--text);
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 0.25rem 0.4rem;
+  }
+
+  :global(.banner) {
     margin-top: 1rem;
     padding: 0.75rem 1rem;
     border-radius: 8px;
@@ -216,37 +163,86 @@
     background: var(--surface);
   }
 
-  .banner.error {
+  :global(.banner.error) {
     border-color: var(--negative);
     color: var(--negative);
   }
 
-  .banner.warning {
+  :global(.banner.warning) {
     border-color: var(--caution);
     color: var(--caution);
   }
 
-  .groups {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(420px, 1fr));
-    gap: 1.25rem;
-    align-items: start;
-  }
-
-  .placeholder,
-  .empty {
+  :global(.placeholder),
+  :global(.empty) {
     color: var(--text-muted);
     text-align: center;
     padding: 4rem 0;
   }
 
-  .empty h2 {
+  :global(.empty h2) {
     margin: 0;
     font-size: 1.25rem;
     color: var(--text);
   }
 
-  .empty p {
+  :global(.empty p) {
     margin: 0.5rem 0 0;
+  }
+
+  :global(.card) {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 1rem 1.25rem;
+    margin-top: 1.25rem;
+  }
+
+  :global(.card > h2) {
+    margin: 0 0 0.75rem;
+    font-size: 1rem;
+    font-weight: 600;
+  }
+
+  main {
+    max-width: 1040px;
+    margin: 0 auto;
+    padding: 1.5rem 2rem 3rem;
+  }
+
+  .top {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 1rem;
+    padding-bottom: 1rem;
+    border-bottom: 1px solid var(--border);
+  }
+
+  h1 {
+    margin: 0;
+    font-size: 1.25rem;
+    font-weight: 600;
+  }
+
+  nav {
+    display: flex;
+    gap: 0.25rem;
+  }
+
+  .tab {
+    background: transparent;
+    border-color: transparent;
+    color: var(--text-muted);
+  }
+
+  /* The current tab is marked by weight and an underline as well as colour. */
+  .tab[aria-current='page'] {
+    color: var(--text);
+    font-weight: 600;
+    border-color: var(--border);
+    background: var(--surface);
+    text-decoration: underline;
+    text-underline-offset: 0.3em;
   }
 </style>
