@@ -1,0 +1,23 @@
+[
+  { "source_id": "chase_checking", "id": "oct-01", "posted": "2026-10-01", "amount": 4500.0, "description": "ACME PAYROLL" },
+  { "source_id": "chase_checking", "id": "oct-02", "posted": "2026-10-01", "amount": -2400.0, "description": "RENT PORTAL" },
+  { "source_id": "applecard_card", "id": "oct-03", "posted": "2026-10-02", "amount": 300.0, "description": "PAYMENT RECEIVED" },
+  { "source_id": "chase_sapphirereserve", "id": "oct-04", "posted": "2026-10-03", "amount": -310.25, "description": "COSTCO" },
+  { "source_id": "chase_checking", "id": "oct-05", "posted": "2026-10-05", "amount": -1200.0, "description": "CHASE CARD AUTOPAY" },
+  { "source_id": "chase_sapphirereserve", "id": "oct-06", "posted": "2026-10-06", "amount": 1200.0, "description": "PAYMENT THANK YOU" },
+  { "source_id": "chase_sapphirereserve", "id": "oct-07", "posted": "2026-10-08", "amount": -12.25, "description": "BLUE BOTTLE COFFEE" },
+  { "source_id": "chase_sapphirereserve", "id": "oct-08", "posted": "2026-10-09", "amount": -65.0, "description": "SHELL" },
+  { "source_id": "chase_sapphirereserve", "id": "oct-09", "posted": "2026-10-10", "amount": -80.0, "description": "AMAZON" },
+  { "source_id": "chase_checking", "id": "oct-10", "posted": "2026-10-12", "amount": -82.5, "description": "COMCAST" },
+  { "source_id": "chase_sapphirereserve", "id": "oct-11", "posted": "2026-10-14", "amount": 20.0, "description": "AMAZON" },
+  { "source_id": "chase_checking", "id": "oct-12", "posted": "2026-10-15", "amount": 250.0, "description": "TAX REFUND" },
+  { "source_id": "applecard_card", "id": "oct-13", "posted": "2026-10-17", "amount": -142.5, "description": "SAFEWAY" },
+  { "source_id": "chase_sapphirereserve", "id": "oct-14", "posted": "2026-10-18", "amount": -48.75, "description": "UBER EATS" },
+  { "source_id": "chase_sapphirereserve", "id": "oct-15", "posted": "2026-10-19", "amount": -32.5, "description": "AMC THEATRES" },
+  { "source_id": "chase_sapphirereserve", "id": "oct-16", "posted": "2026-10-20", "amount": -15.5, "description": "NETFLIX" },
+  { "source_id": "applecard_card", "id": "oct-17", "posted": "2026-10-21", "amount": -24.25, "description": "CVS" },
+  { "source_id": "chase_sapphirereserve", "id": "oct-18", "posted": "2026-10-22", "amount": -6.5, "description": "STARBUCKS" },
+  { "source_id": "chase_sapphirereserve", "id": "oct-19", "posted": "2026-10-23", "amount": -70.25, "description": "SHELL" },
+  { "source_id": "chase_sapphirereserve", "id": "oct-20", "posted": "2026-10-24", "amount": -90.0, "description": "UBER" },
+  { "source_id": "applecard_card", "id": "oct-21", "posted": "2026-10-25", "amount": -18.0, "description": "CORNER BODEGA" }
+]

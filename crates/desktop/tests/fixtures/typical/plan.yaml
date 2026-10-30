@@ -1,0 +1,31 @@
+targets:
+  Auto & Transport: 200.0
+  Dining & Drinks: 300.0
+  Groceries: 600.0
+series:
+  - merchant_key: ACME PAYROLL
+    kind: income
+    expected_amount: 4500.0
+    due_day: 1
+  - merchant_key: RENT PORTAL
+    kind: bill
+    expected_amount: 2400.0
+    due_day: 1
+  - merchant_key: COMCAST
+    kind: bill
+    expected_amount: 80.0
+    due_day: 12
+  - merchant_key: NETFLIX
+    kind: bill
+    expected_amount: 15.5
+    due_day: 20
+  - merchant_key: CITY WATER
+    kind: bill
+    expected_amount: 45.0
+    due_day: 22
+  - merchant_key: STATE FARM
+    kind: bill
+    expected_amount: 125.0
+    due_day: 28
+dismissed:
+  - GYM CLUB

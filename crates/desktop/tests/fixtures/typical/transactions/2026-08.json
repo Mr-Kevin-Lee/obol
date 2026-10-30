@@ -1,0 +1,11 @@
+[
+  { "source_id": "chase_checking", "id": "aug-01", "posted": "2026-08-01", "amount": 4500.0, "description": "ACME PAYROLL" },
+  { "source_id": "chase_checking", "id": "aug-02", "posted": "2026-08-01", "amount": -2400.0, "description": "RENT PORTAL" },
+  { "source_id": "chase_checking", "id": "aug-03", "posted": "2026-08-03", "amount": -45.0, "description": "GYM CLUB" },
+  { "source_id": "chase_sapphirereserve", "id": "aug-04", "posted": "2026-08-12", "amount": -64.0, "description": "TARGET" },
+  { "source_id": "chase_checking", "id": "aug-05", "posted": "2026-08-12", "amount": -78.25, "description": "COMCAST" },
+  { "source_id": "chase_sapphirereserve", "id": "aug-06", "posted": "2026-08-20", "amount": -15.5, "description": "NETFLIX" },
+  { "source_id": "chase_checking", "id": "aug-07", "posted": "2026-08-22", "amount": -45.0, "description": "CITY WATER" },
+  { "source_id": "applecard_card", "id": "aug-08", "posted": "2026-08-27", "amount": -10.99, "description": "SPOTIFY" },
+  { "source_id": "chase_checking", "id": "aug-09", "posted": "2026-08-28", "amount": -125.0, "description": "STATE FARM" }
+]
