@@ -73,7 +73,7 @@
 </script>
 
 {#if error}
-  <div class="banner error" role="alert">{error}</div>
+  <div class="banner error sticky" role="alert">{error}</div>
 {/if}
 
 {#if loading}

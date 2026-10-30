@@ -1,6 +1,7 @@
 <script lang="ts">
   import Dashboard from './Dashboard.svelte'
   import MonthSelector from './MonthSelector.svelte'
+  import SpendingPlan from './SpendingPlan.svelte'
   import Transactions from './Transactions.svelte'
   import { currentMonth } from './calendar'
 
@@ -43,7 +44,7 @@
     {#if screen === 'transactions'}
       <Transactions {month} />
     {:else}
-      <p class="placeholder">The spending plan arrives in task 119.</p>
+      <SpendingPlan {month} />
     {/if}
   {/if}
 </main>
@@ -166,6 +167,14 @@
   :global(.banner.error) {
     border-color: var(--negative);
     color: var(--negative);
+  }
+
+  /* On the long budget screens the control that failed may be far below
+     the top of the page; the alert stays in view. */
+  :global(.banner.sticky) {
+    position: sticky;
+    top: 0.5rem;
+    z-index: 1;
   }
 
   :global(.banner.warning) {
