@@ -12,9 +12,6 @@ use std::io::{self, Write};
 use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 
-// Its callers are the storage modules that stream tasks 112, 114 and 115
-// implement; until they land it's only reached from its own tests.
-#[cfg_attr(not(test), allow(dead_code))]
 pub(crate) fn write_atomically(path: &Path, bytes: &[u8]) -> io::Result<()> {
     if let Some(parent) = path
         .parent()
