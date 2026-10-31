@@ -1078,6 +1078,25 @@ Categories are flat strings seeded from Simplifi's top-level list; an
 imported `Parent:Child` category maps to its parent. No LLM or network call
 is ever made in this path (#35).
 
+**The Simplifi import** reads Simplifi's transactions export (`Date,
+Account, Reviewed, Payee, Category, Exclusion, Amount`; dates as `Oct 27,
+2026`), picked by a path field on the Transactions screen. It is
+**additive**: importing the same or a later export adds only rows not yet
+stored and never changes or removes one, and it seeds a rule only for a
+merchant that has none, so earlier seeds and edits in the app always stay.
+
+- Each account becomes the source `simplifi:<account>`. Simplifi exports no
+  ids, so a row's id is its date, amount and payee, numbered when identical
+  rows repeat on one account.
+- A merchant's seeded rule is the category Simplifi used most for it, ties
+  going to the alphabetically first. Uncategorized rows don't vote.
+- Excluded rows, `Transfer`, `Credit Card Payment`, `Balance Adjustment`
+  and a category naming one of the export's accounts all map to `Transfer`.
+  `Utilities`, `Personal Income` and `Fees & Charges` map to `Bills &
+  Utilities`, `Income` and `Fees`; any other category is kept as is.
+- One bad row fails the whole import before anything is written, and the
+  error names the row number, never its payee or amount.
+
 ## 12. Net worth & breakdown logic
 
 - **Net worth** = sum(asset balances) − sum(liability balances), computed only

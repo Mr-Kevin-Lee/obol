@@ -58,6 +58,7 @@ export interface RefreshResult {
 //
 //   invoke<TransactionsView>('get_transactions', { month })
 //   invoke<TransactionsView>('set_merchant_category', { month, merchantKey, category })
+//   invoke<ImportResult>('import_simplifi', { path })  // additive; reload the view after
 //   invoke<SpendingPlanView>('get_spending_plan', { month, today })
 //   invoke<SpendingPlanView>('set_category_target', { month, today, category, target })  // target: number | null (null removes it)
 //   invoke<SpendingPlanView>('confirm_series', { month, today, merchantKey, kind, expectedAmount, dueDay })
@@ -94,6 +95,11 @@ export interface TransactionsView {
   /** Display order. Always contains every row's current category,
    *  'Income', 'Transfer' and 'Uncategorized' included. */
   available_categories: string[]
+}
+
+export interface ImportResult {
+  added: number
+  rules_added: number
 }
 
 export type SeriesKind = 'bill' | 'income'

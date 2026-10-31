@@ -13,7 +13,7 @@ mod test_support;
 
 use std::sync::Mutex;
 
-use budget::{SpendingPlanView, TransactionsView};
+use budget::{ImportResult, SpendingPlanView, TransactionsView};
 use dashboard::{RefreshResult, StorageLayout};
 use obol_core::{parse_iso_date, Date, RecurringSeries, SeriesKind, YearMonth};
 use view::DashboardView;
@@ -86,6 +86,16 @@ async fn set_merchant_category(
     budget::transactions_view(&layout, month)
 }
 
+/// Additive: re-importing adds only new rows and keeps every existing rule.
+#[tauri::command]
+async fn import_simplifi(
+    lock: tauri::State<'_, WriteLock>,
+    path: String,
+) -> Result<ImportResult, String> {
+    let layout = storage_layout()?;
+    locked(&lock, || budget::import_simplifi(&layout, &path))
+}
+
 #[tauri::command]
 async fn get_spending_plan(month: String, today: String) -> Result<SpendingPlanView, String> {
     budget::spending_plan_view(&storage_layout()?, parse_month(&month)?, parse_day(&today)?)
@@ -146,6 +156,7 @@ pub fn run() {
             refresh,
             get_transactions,
             set_merchant_category,
+            import_simplifi,
             get_spending_plan,
             set_category_target,
             confirm_series,

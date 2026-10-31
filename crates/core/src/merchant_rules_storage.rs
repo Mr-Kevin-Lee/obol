@@ -61,6 +61,27 @@ pub fn set_merchant_category(
     Ok(merchant_rules)
 }
 
+/// Adds a rule for each seeded merchant that has none, returning how many
+/// were added. An existing rule — an edit made in the app — always wins.
+pub fn seed_merchant_rules(
+    path: &Path,
+    seeds: &BTreeMap<String, String>,
+) -> Result<usize, MerchantRulesError> {
+    let mut merchant_rules = load_or_init_merchant_rules(path)?;
+    let before = merchant_rules.rules.len();
+    for (merchant_key, category) in seeds {
+        merchant_rules
+            .rules
+            .entry(merchant_key.clone())
+            .or_insert_with(|| category.clone());
+    }
+    let added = merchant_rules.rules.len() - before;
+    if added > 0 {
+        save(path, &merchant_rules)?;
+    }
+    Ok(added)
+}
+
 fn save(path: &Path, merchant_rules: &MerchantRules) -> Result<(), MerchantRulesError> {
     let yaml = serde_saphyr::to_string(merchant_rules).map_err(MerchantRulesError::Serialize)?;
     Ok(write_atomically(path, yaml.as_bytes())?)
@@ -204,6 +225,63 @@ mod tests {
         fs::write(&path, MALFORMED).unwrap();
 
         let _ = set_merchant_category(&path, "AMAZON", "Shopping");
+
+        assert_eq!(fs::read_to_string(&path).unwrap(), MALFORMED);
+    }
+
+    fn seeds(pairs: &[(&str, &str)]) -> BTreeMap<String, String> {
+        pairs
+            .iter()
+            .map(|(key, category)| (key.to_string(), category.to_string()))
+            .collect()
+    }
+
+    #[test]
+    fn should_seed_a_rule_for_a_new_merchant() {
+        let path = temp_path("seed-new");
+
+        seed_merchant_rules(&path, &seeds(&[("COSTCO", "Groceries")])).unwrap();
+
+        let rules = load_or_init_merchant_rules(&path).unwrap();
+        assert_eq!(category_of(&rules, "COSTCO").as_deref(), Some("Groceries"));
+    }
+
+    #[test]
+    fn should_not_overwrite_an_existing_rule_when_seeding() {
+        let path = temp_path("seed-keep");
+        set_merchant_category(&path, "AMAZON", "Gifts").unwrap();
+
+        // A new merchant alongside, so the file is rewritten.
+        seed_merchant_rules(
+            &path,
+            &seeds(&[("AMAZON", "Shopping"), ("COSTCO", "Groceries")]),
+        )
+        .unwrap();
+
+        let rules = load_or_init_merchant_rules(&path).unwrap();
+        assert_eq!(category_of(&rules, "AMAZON").as_deref(), Some("Gifts"));
+    }
+
+    #[test]
+    fn should_count_only_the_rules_seeding_added() {
+        let path = temp_path("seed-count");
+        set_merchant_category(&path, "AMAZON", "Gifts").unwrap();
+
+        let added = seed_merchant_rules(
+            &path,
+            &seeds(&[("AMAZON", "Shopping"), ("COSTCO", "Groceries")]),
+        )
+        .unwrap();
+
+        assert_eq!(added, 1);
+    }
+
+    #[test]
+    fn should_leave_a_malformed_file_untouched_on_seed() {
+        let path = temp_path("seed-malformed");
+        fs::write(&path, MALFORMED).unwrap();
+
+        let _ = seed_merchant_rules(&path, &seeds(&[("AMAZON", "Shopping")]));
 
         assert_eq!(fs::read_to_string(&path).unwrap(), MALFORMED);
     }

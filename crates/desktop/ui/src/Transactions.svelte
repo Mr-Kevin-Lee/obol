@@ -3,7 +3,7 @@
   import CategoryBars from './CategoryBars.svelte'
   import { insideApp, notInAppMessage } from './backend'
   import { formatDate, formatMoney, formatMonth, formatSignedMoney } from './format'
-  import type { TransactionRow, TransactionsView } from './types'
+  import type { ImportResult, TransactionRow, TransactionsView } from './types'
 
   let { month }: { month: string } = $props()
 
@@ -59,6 +59,28 @@
       if (request === latest) error = `Couldn't change the category for ${row.merchant_name}: ${e}`
     } finally {
       pending = null
+    }
+  }
+
+  let importPath = $state('')
+  let importing = $state(false)
+  let imported = $state<string | null>(null)
+
+  // Additive, so importing a newer export later only adds what's new.
+  async function importSimplifi(event: SubmitEvent) {
+    event.preventDefault()
+    importing = true
+    error = null
+    imported = null
+    try {
+      const result = await invoke<ImportResult>('import_simplifi', { path: importPath })
+      imported = `Imported ${result.added} new transactions and ${result.rules_added} new merchant rules.`
+      importPath = ''
+      await load(month)
+    } catch (e) {
+      error = `Couldn't import the Simplifi export: ${e}`
+    } finally {
+      importing = false
     }
   }
 
@@ -158,7 +180,69 @@
   </section>
 {/if}
 
+{#if !loading && insideApp()}
+  <section class="card" aria-labelledby="import-heading">
+    <h2 id="import-heading">Import from Simplifi</h2>
+    <form class="import" onsubmit={importSimplifi}>
+      <label>
+        Export file
+        <input
+          type="text"
+          placeholder="Full path to the exported .csv file"
+          spellcheck="false"
+          autocomplete="off"
+          bind:value={importPath}
+        />
+      </label>
+      <button type="submit" disabled={importing || importPath.trim() === ''}>
+        {importing ? 'Importing…' : 'Import'}
+      </button>
+    </form>
+    <p class="hint">Adds only transactions not already here, and keeps every category you've set.</p>
+    {#if imported}
+      <p class="imported" role="status">{imported}</p>
+    {/if}
+  </section>
+{/if}
+
 <style>
+  .import {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.5rem;
+  }
+
+  .import label {
+    display: flex;
+    flex: 1;
+    align-items: center;
+    gap: 0.5rem;
+    font-size: 0.8125rem;
+    color: var(--text-muted);
+  }
+
+  .import input {
+    flex: 1;
+    min-width: 16rem;
+  }
+
+  .import button {
+    font-size: 0.8125rem;
+    padding: 0.25rem 0.75rem;
+  }
+
+  .hint,
+  .imported {
+    margin: 0.5rem 0 0;
+    font-size: 0.8125rem;
+    color: var(--text-muted);
+  }
+
+  .imported {
+    color: var(--positive);
+  }
+
   .spent {
     padding: 1.25rem 0 0;
   }

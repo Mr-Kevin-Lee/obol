@@ -9,13 +9,14 @@
 //! plan figure, `spent`, `target` and series amount is a magnitude.
 
 use std::collections::{BTreeMap, HashMap};
+use std::path::Path;
 
 use obol_core::{
     available_categories, categorize, compute_month_plan, display_name, format_iso_date,
-    load_or_init_merchant_rules, load_or_init_plan, load_recent_snapshots, load_transactions_range,
-    save_plan, set_merchant_category, suggest_series, CategorizedTransaction, Date, MerchantRules,
-    PaymentStatus, PlanConfig, RecurringSeries, SeriesKind, YearMonth, INCOME, TRANSFER,
-    UNCATEGORIZED,
+    import_simplifi_export, load_or_init_merchant_rules, load_or_init_plan, load_recent_snapshots,
+    load_transactions_range, save_plan, set_merchant_category, suggest_series,
+    CategorizedTransaction, Date, MerchantRules, PaymentStatus, PlanConfig, RecurringSeries,
+    SeriesKind, YearMonth, INCOME, TRANSFER, UNCATEGORIZED,
 };
 use serde::Serialize;
 
@@ -43,7 +44,7 @@ pub struct TransactionRow {
     pub merchant_key: String,
     pub merchant_name: String,
     /// The source's institution and account type, from the latest snapshot;
-    /// the bare `source_id` if no snapshot names it.
+    /// "<account> (Simplifi)" for an imported one, else the bare `source_id`.
     pub account_label: String,
     /// Signed: negative is money out.
     pub amount: f64,
@@ -314,6 +315,29 @@ pub fn dismiss_series(layout: &StorageLayout, merchant_key: &str) -> Result<(), 
     })
 }
 
+/// What a Simplifi import added. Imports are additive, so nothing else
+/// can have changed.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize)]
+pub struct ImportResult {
+    pub added: usize,
+    pub rules_added: usize,
+}
+
+/// The Simplifi import (task 121): `path` is the export CSV.
+pub fn import_simplifi(layout: &StorageLayout, path: &str) -> Result<ImportResult, String> {
+    let path = non_empty(path, "path")?;
+    let summary = import_simplifi_export(
+        Path::new(path),
+        &layout.transactions,
+        &layout.merchant_rules,
+    )
+    .map_err(|err| err.to_string())?;
+    Ok(ImportResult {
+        added: summary.transactions.added,
+        rules_added: summary.rules_added,
+    })
+}
+
 // The two views only ever read. `load_or_init_*` writes an empty file when
 // one is missing; a read doing that could race an edit in flight and land
 // its empty file after the edit's, wiping it. So a missing file reads as
@@ -424,10 +448,13 @@ fn transaction_row(
         posted: format_iso_date(transaction.transaction.posted),
         merchant_key: transaction.merchant_key.clone(),
         merchant_name: display_name(&transaction.merchant_key),
-        account_label: labels
-            .get(source_id)
-            .cloned()
-            .unwrap_or_else(|| source_id.clone()),
+        account_label: labels.get(source_id).cloned().unwrap_or_else(|| {
+            // Imported accounts have no snapshot to name them.
+            match source_id.strip_prefix("simplifi:") {
+                Some(account) => format!("{account} (Simplifi)"),
+                None => source_id.clone(),
+            }
+        }),
         amount: transaction.transaction.amount,
         category: transaction.category.clone(),
     }
@@ -1212,5 +1239,100 @@ mod tests {
             .unwrap()
             .dismissed
             .contains("SPOTIFY"));
+    }
+
+    fn write_export(layout: &StorageLayout) -> String {
+        let path = layout.transactions.with_file_name("export.csv");
+        fs::write(
+            &path,
+            "Date,Account,Reviewed,Payee,Category,Exclusion,Amount\n\
+             \"Oct 20, 2026\",Card,no,Corner Cafe,Dining & Drinks,no, -4.00\n\
+             \"Oct 21, 2026\",Card,no,Green Grocer,Groceries,no, -60.00\n",
+        )
+        .unwrap();
+        path.to_string_lossy().into_owned()
+    }
+
+    #[test]
+    fn should_show_imported_transactions_in_their_month() {
+        let layout = temp_layout("import-view");
+        let path = write_export(&layout);
+
+        import_simplifi(&layout, &path).unwrap();
+
+        assert_eq!(
+            transactions_view(&layout, october())
+                .unwrap()
+                .transactions
+                .len(),
+            2
+        );
+    }
+
+    #[test]
+    fn should_categorize_imported_transactions_by_the_seeded_rules() {
+        let layout = temp_layout("import-rules");
+        let path = write_export(&layout);
+
+        import_simplifi(&layout, &path).unwrap();
+
+        assert_eq!(
+            transactions_view(&layout, october()).unwrap().transactions[0].category,
+            "Groceries"
+        );
+    }
+
+    #[test]
+    fn should_report_what_the_import_added() {
+        let layout = temp_layout("import-counts");
+        let path = write_export(&layout);
+
+        let result = import_simplifi(&layout, &path).unwrap();
+
+        assert_eq!(
+            result,
+            ImportResult {
+                added: 2,
+                rules_added: 2
+            }
+        );
+    }
+
+    #[test]
+    fn should_label_an_imported_account_by_its_simplifi_name() {
+        let layout = temp_layout("import-label");
+        let path = write_export(&layout);
+        import_simplifi(&layout, &path).unwrap();
+
+        let view = transactions_view(&layout, october()).unwrap();
+
+        assert_eq!(view.transactions[0].account_label, "Card (Simplifi)");
+    }
+
+    #[test]
+    fn should_trim_whitespace_around_the_import_path() {
+        let layout = temp_layout("import-trim");
+        let path = write_export(&layout);
+
+        assert!(import_simplifi(&layout, &format!("  {path}\n")).is_ok());
+    }
+
+    #[test]
+    fn should_reject_an_empty_import_path() {
+        let layout = temp_layout("import-empty");
+
+        assert_eq!(
+            import_simplifi(&layout, "  ").unwrap_err(),
+            "a path can't be empty"
+        );
+    }
+
+    #[test]
+    fn should_report_a_missing_export_file() {
+        let layout = temp_layout("import-missing");
+
+        let err = import_simplifi(&layout, "/nonexistent/export.csv").unwrap_err();
+
+        assert!(err.contains("could not be read"));
     }
 }

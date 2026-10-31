@@ -966,4 +966,7 @@ cut from task 111b's contract commit and owning disjoint files.
 119. *ui stream* — the Spending plan screen.
 120. Verify the integrated phase: tests, mutation passes, the browser pane
     against real serialized backend output, all gates.
-121. Simplifi CSV import — gated on the user's export file.
+121. Simplifi CSV import — `simplifi_import.rs`: an RFC 4180 parser, the
+    category mapping, majority-vote rule seeding, and an additive import
+    (§11.4); an `import_simplifi` command and a path field on the
+    Transactions screen.
