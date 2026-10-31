@@ -10,7 +10,13 @@
     formatPercentage,
     formatSignedMoney,
   } from './format'
-  import type { PaymentStatus, SeriesKind, SpendingPlanView, SuggestionRow } from './types'
+  import type {
+    PaymentStatus,
+    SeriesKind,
+    SeriesRow,
+    SpendingPlanView,
+    SuggestionRow,
+  } from './types'
 
   let { month }: { month: string } = $props()
 
@@ -26,6 +32,15 @@
   let newCategory = $state('')
   let newTarget = $state<number | null>(null)
 
+  // The confirmed series being edited, by merchant key.
+  let editingSeries = $state<string | null>(null)
+  let seriesAmount = $state<number | null>(null)
+  let seriesDay = $state<number | null>(null)
+  let newName = $state('')
+  let newKind = $state<SeriesKind>('bill')
+  let newAmount = $state<number | null>(null)
+  let newDay = $state<number | null>(null)
+
   // Responses for a month you've already navigated away from are dropped.
   let latest = 0
 
@@ -39,6 +54,7 @@
     error = null
     loading = true
     editing = null
+    editingSeries = null
     if (!insideApp()) {
       error = notInAppMessage
       loading = false
@@ -107,6 +123,38 @@
   const dismiss = (s: SuggestionRow) =>
     mutate('dismiss_series', { merchantKey: s.merchant_key }, `Couldn't dismiss ${s.name}`)
 
+  // A series amount must be positive and its day a real day of the month,
+  // matching the backend's checks so the button never offers a sure failure.
+  const positiveAmount = (n: number | null): n is number => validAmount(n) && n > 0
+  const validDay = (n: number | null): n is number =>
+    typeof n === 'number' && Number.isInteger(n) && n >= 1 && n <= 31
+
+  function startSeriesEdit(s: SeriesRow) {
+    editingSeries = s.merchant_key
+    seriesAmount = s.expected_amount
+    seriesDay = s.due_day
+  }
+
+  // Confirming again with the same merchant replaces the series.
+  async function saveSeries(s: SeriesRow) {
+    if (!positiveAmount(seriesAmount) || !validDay(seriesDay)) return
+    const args = { merchantKey: s.merchant_key, kind: s.kind, expectedAmount: seriesAmount, dueDay: seriesDay }
+    if (await mutate('confirm_series', args, `Couldn't save ${s.name}`)) editingSeries = null
+  }
+
+  const removeSeries = (s: SeriesRow) =>
+    mutate('remove_series', { merchantKey: s.merchant_key }, `Couldn't remove ${s.name}`)
+
+  async function addSeries() {
+    if (newName.trim() === '' || !positiveAmount(newAmount) || !validDay(newDay)) return
+    const args = { name: newName, kind: newKind, expectedAmount: newAmount, dueDay: newDay }
+    if (await mutate('add_series', args, `Couldn't add ${newName.trim()}`)) {
+      newName = ''
+      newAmount = null
+      newDay = null
+    }
+  }
+
   // Status is always text plus an icon, with colour only reinforcing it (FR9, FR27).
   const statusLabel: Record<PaymentStatus, { icon: string; text: string }> = {
     paid: { icon: '✓', text: 'Paid' },
@@ -174,7 +222,7 @@
         <h2 id="series-{group.kind}">{group.title}</h2>
         <ul class="rows">
           {#each rows as s (s.merchant_key)}
-            <li>
+            <li class="series">
               <div class="name">
                 <span>{s.name}</span>
                 <span class="muted">
@@ -186,12 +234,100 @@
                 <span aria-hidden="true">{statusLabel[s.status].icon}</span>
                 {statusLabel[s.status].text}
               </span>
+              {#if editingSeries === s.merchant_key}
+                <form
+                  class="edit series-edit"
+                  onsubmit={(e) => {
+                    e.preventDefault()
+                    saveSeries(s)
+                  }}
+                >
+                  <label>
+                    Expected amount for {s.name}
+                    <input type="number" min="0.01" step="0.01" bind:value={seriesAmount} />
+                  </label>
+                  <label>
+                    Day of month for {s.name}
+                    <input type="number" min="1" max="31" step="1" bind:value={seriesDay} />
+                  </label>
+                  <button
+                    type="submit"
+                    disabled={busy || !positiveAmount(seriesAmount) || !validDay(seriesDay)}
+                  >
+                    Save
+                  </button>
+                  <button type="button" class="secondary" onclick={() => (editingSeries = null)}>
+                    Cancel
+                  </button>
+                </form>
+              {:else}
+                <div class="row-actions">
+                  <button
+                    type="button"
+                    class="secondary"
+                    aria-label="Edit {s.name}"
+                    disabled={busy}
+                    onclick={() => startSeriesEdit(s)}
+                  >
+                    Edit
+                  </button>
+                  <button
+                    type="button"
+                    class="secondary"
+                    aria-label="Remove {s.name}"
+                    disabled={busy}
+                    onclick={() => removeSeries(s)}
+                  >
+                    Remove
+                  </button>
+                </div>
+              {/if}
             </li>
           {/each}
         </ul>
       </section>
     {/if}
   {/each}
+
+  <section class="card" aria-labelledby="add-series-heading">
+    <h2 id="add-series-heading">Add a bill or income</h2>
+    <form
+      class="add-series"
+      onsubmit={(e) => {
+        e.preventDefault()
+        addSeries()
+      }}
+    >
+      <label>
+        Name
+        <input type="text" autocomplete="off" spellcheck="false" bind:value={newName} />
+      </label>
+      <label>
+        Kind
+        <select bind:value={newKind}>
+          <option value="bill">Bill</option>
+          <option value="income">Income</option>
+        </select>
+      </label>
+      <label>
+        Amount
+        <input type="number" min="0.01" step="0.01" bind:value={newAmount} />
+      </label>
+      <label>
+        Day of month
+        <input type="number" min="1" max="31" step="1" bind:value={newDay} />
+      </label>
+      <button
+        type="submit"
+        disabled={busy || newName.trim() === '' || !positiveAmount(newAmount) || !validDay(newDay)}
+      >
+        Add
+      </button>
+    </form>
+    <p class="none">
+      Use the name your bank shows for the payee, so obol can match payments to it.
+    </p>
+  </section>
 
   <section class="card" aria-labelledby="targets-heading">
     <h2 id="targets-heading">Targets</h2>
@@ -500,12 +636,43 @@
   }
 
   .actions,
+  .row-actions,
   .edit,
-  .add {
+  .add,
+  .add-series {
     display: flex;
     flex-wrap: wrap;
     align-items: center;
     gap: 0.5rem;
+  }
+
+  .rows li.series {
+    flex-wrap: wrap;
+  }
+
+  /* The edit form takes its own line under the row it edits. */
+  .series-edit {
+    flex-basis: 100%;
+    margin-top: 0;
+  }
+
+  .row-actions button,
+  .add-series button {
+    font-size: 0.8125rem;
+    padding: 0.25rem 0.75rem;
+  }
+
+  .add-series input[type='text'] {
+    width: 12rem;
+  }
+
+  .add-series input[type='number'] {
+    width: 6rem;
+  }
+
+  .add-series + .none {
+    margin-top: 0.5rem;
+    font-size: 0.8125rem;
   }
 
   .actions,

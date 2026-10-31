@@ -1370,6 +1370,10 @@ exactly — the screenshots that prompted D44 reconcile to the cent.
   merchant appears in at least 2 distinct months, always with the same sign,
   with an amount spread within 20% and a due-day spread within 7 days. You
   confirm or dismiss each suggestion; nothing becomes a series on its own.
+  You can also add a series by hand (its name reduced to a merchant key,
+  refused if that merchant already has one), edit a confirmed series'
+  amount and due day, or remove it. Removing also dismisses it, so the same
+  history doesn't suggest it straight back.
   - A transaction matches a series on merchant key, and only when its sign
     fits the kind: a bill matches money out, income matches money in. A
     refund from a bill's payee is therefore ordinary category activity,
@@ -1496,7 +1500,9 @@ single-key bindings.
 - Income, Bills, Planned and Other for the month, then **Left this month**
   and, for the current month, per day — as figures with a bar, not a donut,
   and labelled "Overspent" in text when negative.
-- Bills and income series with their status (Paid, Upcoming, Past due).
+- Bills and income series with their status (Paid, Upcoming, Past due),
+  each with an inline editor for its amount and due day and a Remove
+  button, plus a form to add one by hand.
 - Each category target as "spent $X of $Y", with an inline editor; an
   overspend says so in text, not only in colour.
 - Suggested series to confirm or dismiss.

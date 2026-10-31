@@ -148,6 +148,36 @@ async fn dismiss_series(
     budget::spending_plan_view(&layout, month, today)
 }
 
+#[tauri::command]
+async fn remove_series(
+    lock: tauri::State<'_, WriteLock>,
+    month: String,
+    today: String,
+    merchant_key: String,
+) -> Result<SpendingPlanView, String> {
+    let (layout, month, today) = (storage_layout()?, parse_month(&month)?, parse_day(&today)?);
+    locked(&lock, || budget::remove_series(&layout, &merchant_key))?;
+    budget::spending_plan_view(&layout, month, today)
+}
+
+#[tauri::command]
+#[allow(clippy::too_many_arguments)] // one per field the webview sends
+async fn add_series(
+    lock: tauri::State<'_, WriteLock>,
+    month: String,
+    today: String,
+    name: String,
+    kind: SeriesKind,
+    expected_amount: f64,
+    due_day: u8,
+) -> Result<SpendingPlanView, String> {
+    let (layout, month, today) = (storage_layout()?, parse_month(&month)?, parse_day(&today)?);
+    locked(&lock, || {
+        budget::add_series(&layout, &name, kind, expected_amount, due_day)
+    })?;
+    budget::spending_plan_view(&layout, month, today)
+}
+
 pub fn run() {
     tauri::Builder::default()
         .manage(WriteLock(Mutex::new(())))
@@ -161,6 +191,8 @@ pub fn run() {
             set_category_target,
             confirm_series,
             dismiss_series,
+            remove_series,
+            add_series,
         ])
         .run(tauri::generate_context!())
         .expect("error while running obol desktop app");

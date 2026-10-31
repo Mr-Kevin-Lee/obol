@@ -14,7 +14,7 @@ use std::path::Path;
 use obol_core::{
     available_categories, categorize, compute_month_plan, display_name, format_iso_date,
     import_simplifi_export, load_or_init_merchant_rules, load_or_init_plan, load_recent_snapshots,
-    load_transactions_range, save_plan, set_merchant_category, suggest_series,
+    load_transactions_range, merchant_key, save_plan, set_merchant_category, suggest_series,
     CategorizedTransaction, Date, MerchantRules, PaymentStatus, PlanConfig, RecurringSeries,
     SeriesKind, YearMonth, INCOME, TRANSFER, UNCATEGORIZED,
 };
@@ -336,6 +336,51 @@ pub fn import_simplifi(layout: &StorageLayout, path: &str) -> Result<ImportResul
         added: summary.transactions.added,
         rules_added: summary.rules_added,
     })
+}
+
+/// Removes a confirmed series and dismisses it, so the same history doesn't
+/// offer it straight back as a suggestion.
+pub fn remove_series(layout: &StorageLayout, merchant_key: &str) -> Result<(), String> {
+    let merchant_key = non_empty(merchant_key, "merchant")?;
+    update_plan(layout, |plan| {
+        plan.series
+            .retain(|existing| existing.merchant_key != merchant_key);
+        plan.dismissed.insert(merchant_key.to_string());
+    })
+}
+
+/// Adds a bill or income by hand. `name` is as the user typed it and is
+/// reduced to a merchant key, so it matches that merchant's transactions.
+pub fn add_series(
+    layout: &StorageLayout,
+    name: &str,
+    kind: SeriesKind,
+    expected_amount: f64,
+    due_day: u8,
+) -> Result<(), String> {
+    // A blank key is rejected by `confirm_series` below.
+    let merchant_key = merchant_key(name);
+    // Unlike confirming, adding never replaces: a name that normalizes to
+    // an existing merchant is more likely a slip than an edit.
+    if read_plan(layout)?
+        .series
+        .iter()
+        .any(|existing| existing.merchant_key == merchant_key)
+    {
+        return Err(format!(
+            "{} is already in your plan",
+            display_name(&merchant_key)
+        ));
+    }
+    confirm_series(
+        layout,
+        RecurringSeries {
+            merchant_key,
+            kind,
+            expected_amount,
+            due_day,
+        },
+    )
 }
 
 // The two views only ever read. `load_or_init_*` writes an empty file when
@@ -1239,6 +1284,108 @@ mod tests {
             .unwrap()
             .dismissed
             .contains("SPOTIFY"));
+    }
+
+    fn plan_series(layout: &StorageLayout) -> Vec<RecurringSeries> {
+        load_or_init_plan(&layout.plan).unwrap().series
+    }
+
+    #[test]
+    fn should_remove_a_confirmed_series() {
+        let layout = temp_layout("remove-series");
+        confirm_series(&layout, series("COMCAST", SeriesKind::Bill, 82.5, 12)).unwrap();
+
+        remove_series(&layout, "COMCAST").unwrap();
+
+        assert!(plan_series(&layout).is_empty());
+    }
+
+    #[test]
+    fn should_keep_other_series_when_removing_one() {
+        let layout = temp_layout("remove-keeps");
+        confirm_series(&layout, series("COMCAST", SeriesKind::Bill, 82.5, 12)).unwrap();
+        confirm_series(&layout, series("NETFLIX", SeriesKind::Bill, 15.5, 20)).unwrap();
+
+        remove_series(&layout, "COMCAST").unwrap();
+
+        assert_eq!(
+            plan_series(&layout),
+            [series("NETFLIX", SeriesKind::Bill, 15.5, 20)]
+        );
+    }
+
+    #[test]
+    fn should_dismiss_a_removed_series_so_it_isnt_suggested_again() {
+        let layout = temp_layout("remove-dismisses");
+        confirm_series(&layout, series("COMCAST", SeriesKind::Bill, 82.5, 12)).unwrap();
+
+        remove_series(&layout, "COMCAST").unwrap();
+
+        assert!(load_or_init_plan(&layout.plan)
+            .unwrap()
+            .dismissed
+            .contains("COMCAST"));
+    }
+
+    #[test]
+    fn should_reject_removing_an_empty_merchant() {
+        let layout = temp_layout("remove-empty");
+
+        assert!(remove_series(&layout, " ").is_err());
+    }
+
+    #[test]
+    fn should_add_a_series_under_its_merchant_key() {
+        let layout = temp_layout("add-series");
+
+        add_series(&layout, "Acme Payroll", SeriesKind::Income, 4500.0, 1).unwrap();
+
+        assert_eq!(
+            plan_series(&layout),
+            [series(
+                &obol_core::merchant_key("Acme Payroll"),
+                SeriesKind::Income,
+                4500.0,
+                1
+            )]
+        );
+    }
+
+    #[test]
+    fn should_reject_adding_a_name_with_no_merchant_key() {
+        let layout = temp_layout("add-blank");
+
+        assert!(add_series(&layout, "  ", SeriesKind::Bill, 82.5, 12).is_err());
+    }
+
+    #[test]
+    fn should_reject_adding_a_merchant_already_in_the_plan() {
+        let layout = temp_layout("add-duplicate");
+        add_series(&layout, "Comcast", SeriesKind::Bill, 82.5, 12).unwrap();
+
+        let err = add_series(&layout, "comcast", SeriesKind::Income, 10.0, 1).unwrap_err();
+
+        assert_eq!(err, "Comcast is already in your plan");
+    }
+
+    #[test]
+    fn should_keep_the_existing_series_when_an_add_is_rejected() {
+        let layout = temp_layout("add-duplicate-keeps");
+        add_series(&layout, "Comcast", SeriesKind::Bill, 82.5, 12).unwrap();
+
+        let _ = add_series(&layout, "Comcast", SeriesKind::Income, 10.0, 1);
+
+        assert_eq!(plan_series(&layout)[0].expected_amount, 82.5);
+    }
+
+    #[test]
+    fn should_validate_an_added_series_like_a_confirmed_one() {
+        let layout = temp_layout("add-invalid");
+
+        assert!(
+            add_series(&layout, "Comcast", SeriesKind::Bill, 0.0, 12).is_err()
+                && add_series(&layout, "Comcast", SeriesKind::Bill, 82.5, 0).is_err()
+        );
     }
 
     fn write_export(layout: &StorageLayout) -> String {

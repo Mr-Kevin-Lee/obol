@@ -63,6 +63,11 @@ export interface RefreshResult {
 //   invoke<SpendingPlanView>('set_category_target', { month, today, category, target })  // target: number | null (null removes it)
 //   invoke<SpendingPlanView>('confirm_series', { month, today, merchantKey, kind, expectedAmount, dueDay })
 //   invoke<SpendingPlanView>('dismiss_series', { month, today, merchantKey })
+//   invoke<SpendingPlanView>('remove_series', { month, today, merchantKey })  // also dismisses it
+//   invoke<SpendingPlanView>('add_series', { month, today, name, kind, expectedAmount, dueDay })  // name as typed
+//
+// Editing a confirmed series' amount or due day is `confirm_series` with
+// its existing merchantKey and kind: it replaces the series.
 //
 // `today` is the local date from the webview's clock, so the backend
 // never has to guess the user's timezone.
