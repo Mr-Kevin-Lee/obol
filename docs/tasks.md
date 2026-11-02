@@ -831,3 +831,142 @@ decision (auto-populate, not just surface-for-copying).
     `chase_sapphirereserve`/`applecard_card` entries automatically —
     fixing the earlier `chase_credit_card` typo without hand-editing —
     and the Dashboard's debt payoff panel reflects it.
+
+## Phase V — Tauri desktop app, slice 1: balances + net worth (D43, v0.3a)
+
+Issue #36. The TUI caps what the dashboard can show, and #35's
+categorization review queue needs clickable, bulk-editable rows a
+terminal can't give — so the frontend decision gets made once, before
+that queue is built, rather than after building it twice. D43 records
+the full reasoning, including why this reverses D7 and what it costs
+against §4's minimal-dependency principle.
+
+Scoped deliberately narrow: everything here depends on a `Snapshot` and
+nothing else, so it has no overlap with the SimpleFIN migration (#37)
+changing the provider layer underneath, and can be built against a
+fixture in parallel with it. Every `rules.yaml`-derived panel is
+excluded and lands in v0.3b. The `ratatui` screens stay functional and
+untouched throughout — their deletion is v0.3d, not this phase.
+
+103. `docs/spec.md` — D43 decision record superseding D7 and D19; §15's
+    CLI/TUI, GUI and Charts rows; §16's v0.3 rewritten in place as the
+    sliced Tauri phase; §14's interface note and its reversed
+    no-refresh bullet; §6.1's diagram and prose; FR19/FR20's narrowing.
+    This Phase V entry. **No code** — the spec said the opposite of
+    this issue, and gets corrected before anything is built against it.
+104. Keychain/signing spike (issue #28, D24) — does a signed `.app`
+    bundle with a `keychain-access-groups` entitlement make
+    `SecItemAdd` succeed where the bare binary gets
+    `errSecMissingEntitlement`? Runs in parallel; does **not** gate
+    tasks 105–110, since `statement_import` reads local PDFs and needs
+    no secrets. Its outcome decides the bundle identifier used in 105
+    and whether #28 can close, not whether the port is viable. Verdict
+    recorded as a D24 addendum and an issue comment.
+105. `crates/desktop/` — new workspace crate `obol-desktop`, added to
+    the root `Cargo.toml`'s `members`. `tauri.conf.json` overrides
+    Tauri's default `src-tauri/` layout to match this repo's: frontend
+    at `crates/desktop/ui/` (Svelte 5 + TypeScript + Vite, no component
+    library, no CSS framework, nothing from a CDN per D43),
+    `build.frontendDist` → `ui/dist`, `bundle.macOS.entitlements` → the
+    existing root `entitlements.plist`. `package-lock.json` committed;
+    `npm audit` added to the `Makefile`'s `audit` target beside
+    `cargo audit` (D21). Verify: `cargo build -p obol-desktop`, empty
+    window launches.
+106. `crates/desktop/src/view.rs` — `DashboardView` and its assembly,
+    **test-first**. This is the only new logic in the phase, and a DTO
+    is forced rather than chosen: `Snapshot`/`AccountRecord` already
+    derive `Serialize` and carry no PII by design (§11.1), but
+    `NetWorth` and `AssetClass` derive neither, and both the net-worth
+    figure and the holdings buckets must be computed. Reuses
+    `calculate_net_worth_from_records`, `bucket` and `AssetClass::label`
+    rather than re-deriving any of it — net worth's sign rule stays in
+    the one place D11 put it. Tests: computed net worth serializes as a
+    tagged value; an all-failed snapshot serializes as `unavailable`
+    with `total_sources`, never a numeric `0` (§9.1); accounts group
+    into assets and liabilities; a failed account carries its
+    `error_message`; holdings bucket by asset class with percentages; an
+    account with no holdings omits the field; the since-delta computes
+    against a previous snapshot and is omitted without one; an empty
+    snapshot reports unavailable.
+107. `crates/desktop/src/lib.rs` — two Tauri commands, one per screen
+    (not thin per-function wrappers): `get_dashboard()` reads from disk
+    only, via `load_recent_snapshots(dir, 2)` for the snapshot and its
+    predecessor; `refresh()` is `async` and builds the registry the way
+    `crates/cli/src/main.rs` does (`provider_registry` +
+    `register_simplefin` + `register_statement_import`), calls
+    `run_and_save`, and surfaces `save_error` as a non-blocking warning
+    per §9.1. Storage-path resolution becomes a helper honoring
+    `OBOL_STORAGE_DIR` and defaulting to
+    `~/Library/Application Support/obol`, mirroring the CLI's
+    `storage_dir()` (D17 — still fixed, the override is a dev seam, not
+    user configuration). `refresh` is in this slice deliberately:
+    calling async core from a Tauri command without freezing the
+    webview is the one real architectural unknown, and worth retiring
+    first.
+108. `crates/desktop/tests/fixtures/` — committed fixture snapshots
+    exercising every rendering state in one file (ok asset, ok
+    liability, `status: error` account with a message, holdings-bearing
+    account), plus a predecessor file so the since-delta has something
+    to diff against, plus an all-failed file for the net-worth
+    unavailable state. A `make desktop-dev` target points
+    `OBOL_STORAGE_DIR` at it. This is D43's mock seam in full — no
+    `MockProvider` is written, since the view's only input is a
+    snapshot.
+109. `crates/desktop/ui/` — the dashboard itself: net worth header (with
+    the unavailable state and the since-delta), assets and liabilities
+    visually grouped (FR8), per-account rows with institution, type,
+    balance and a status label, a failed account showing its error text
+    rather than a blank row (FR18), and proportional holdings bars
+    (FR22) as plain divs, not a chart library. Okabe–Ito hex values and
+    the never-color-alone rule carried over verbatim from
+    `crates/cli/src/dashboard.rs` (FR9, FR27). Plus a Refresh button
+    with a pending state.
+110. Verify and close out. `cargo test -p obol-desktop` and
+    `cargo test --workspace`; hand mutation-test every condition and
+    sign in `view.rs`; launch via `make desktop-dev` and check each
+    rendering state against the fixtures; point `OBOL_STORAGE_DIR` at
+    the all-failed fixture and confirm the unavailable message, never
+    `$0`; click Refresh against real `~/Statements` and confirm a new
+    snapshot is written and the view updates; run `obol` and confirm
+    the TUI behaves exactly as before. Screenshots in the PR.
+
+## Phase W — Transactions, categorization and the spending plan (D44, v0.6)
+
+Obol takes over Simplifi's categorized transactions and monthly spending
+plan. D44 records why D38's reasons for parking this no longer hold. Built
+against fixture transactions in parallel with #37, on a `transactions`
+branch stacked on `tauri-desktop`. New logic lives in new files, so the
+only file shared with #37 is `crates/core/src/lib.rs`.
+
+Stage 1 runs as four parallel streams, each in its own worktree and branch,
+cut from task 111b's contract commit and owning disjoint files.
+
+111. `docs/spec.md` — D44 (supersedes D38); §1 and §3; §11.4 transaction
+    data model and categorization; §13.6 spending-plan model; §14 two new
+    screens; §16 v0.6. This Phase W entry. No code.
+111b. The contract commit: every shared type and signature, compiling, with
+    stub bodies; `lib.rs` wiring for every new module; the shared
+    `atomic_write`, `YearMonth` and date (de)serialization, implemented and
+    tested because every stream depends on them; the desktop view-model
+    types and their TypeScript mirror.
+112. *storage stream* — `transaction_storage.rs`: month-file storage,
+    upsert on (`source_id`, `id`), `0600`/`0700`.
+113. *storage stream* — `merchant.rs`: merchant-key normalization and
+    display names, pinned by a table of realistic bank descriptions.
+114. *categorize stream* — `categorize.rs`, `merchant_rules_storage.rs`:
+    category list, built-in defaults with word-prefix matching, rules
+    storage, transfer pairing, resolution order.
+115. *plan stream* — `spending_plan.rs`, `plan_storage.rs`: plan storage,
+    series suggestions, the month plan.
+116. Integration — desktop view assembly and commands, with a write mutex;
+    transfer pairing reads adjacent months.
+117. Integration — Aug–Oct 2026 fixture transactions, rules and plan, with
+    fixture tests asserting the plan's exact figures.
+118. *ui stream* — tabs, a shared month selector, the Transactions screen.
+119. *ui stream* — the Spending plan screen.
+120. Verify the integrated phase: tests, mutation passes, the browser pane
+    against real serialized backend output, all gates.
+121. Simplifi CSV import — `simplifi_import.rs`: an RFC 4180 parser, the
+    category mapping, majority-vote rule seeding, and an additive import
+    (§11.4); an `import_simplifi` command and a path field on the
+    Transactions screen.

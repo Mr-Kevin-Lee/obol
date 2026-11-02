@@ -1,0 +1,26 @@
+# Every fixture merchant except CORNER BODEGA, which stays Uncategorized
+# on purpose, has an explicit rule here. That keeps the fixture tests'
+# expected figures independent of the built-in defaults table, which is
+# expected to change (e.g. a generated OpenStreetMap-derived one).
+rules:
+  ACME PAYROLL: Income
+  AMAZON: Shopping
+  AMC THEATRES: Entertainment
+  BLUE BOTTLE COFFEE: Dining & Drinks
+  CITY WATER: Bills & Utilities
+  COMCAST: Bills & Utilities
+  COSTCO: Groceries
+  CVS: Health
+  GYM CLUB: Fitness
+  HOME DEPOT: Home
+  NETFLIX: Entertainment
+  RENT PORTAL: Home
+  SAFEWAY: Groceries
+  SHELL: Auto & Transport
+  SPOTIFY: Entertainment
+  STARBUCKS: Dining & Drinks
+  STATE FARM: Bills & Utilities
+  TARGET: Shopping
+  TAX REFUND: Income
+  UBER: Auto & Transport
+  UBER EATS: Dining & Drinks

@@ -1,0 +1,29 @@
+{
+  "schema_version": 1,
+  "snapshot_id": "fixture-all-failed-2026-10-26",
+  "created_at": "2026-10-26T09:00:00-07:00",
+  "accounts": [
+    {
+      "account_key": "sha256:fixture-chase-checking",
+      "source_id": "chase_checking",
+      "institution": "Chase",
+      "category": "asset",
+      "type": "checking",
+      "balance": null,
+      "currency": "USD",
+      "status": "error",
+      "error_message": "statement could not be parsed: no closing balance found"
+    },
+    {
+      "account_key": "sha256:fixture-vanguard-brokerage",
+      "source_id": "vanguard_brokerage",
+      "institution": "Vanguard",
+      "category": "asset",
+      "type": "brokerage",
+      "balance": null,
+      "currency": "USD",
+      "status": "error",
+      "error_message": "no statement found in ~/Statements/Vanguard/Brokerage"
+    }
+  ]
+}

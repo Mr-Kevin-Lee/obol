@@ -1,0 +1,12 @@
+[
+  { "source_id": "chase_checking", "id": "sep-01", "posted": "2026-09-01", "amount": 4500.0, "description": "ACME PAYROLL" },
+  { "source_id": "chase_checking", "id": "sep-02", "posted": "2026-09-01", "amount": -2400.0, "description": "RENT PORTAL" },
+  { "source_id": "chase_checking", "id": "sep-03", "posted": "2026-09-03", "amount": -45.0, "description": "GYM CLUB" },
+  { "source_id": "chase_checking", "id": "sep-04", "posted": "2026-09-12", "amount": -80.0, "description": "COMCAST" },
+  { "source_id": "chase_sapphirereserve", "id": "sep-05", "posted": "2026-09-14", "amount": -129.75, "description": "HOME DEPOT" },
+  { "source_id": "chase_sapphirereserve", "id": "sep-06", "posted": "2026-09-20", "amount": -15.5, "description": "NETFLIX" },
+  { "source_id": "chase_checking", "id": "sep-07", "posted": "2026-09-22", "amount": -45.0, "description": "CITY WATER" },
+  { "source_id": "applecard_card", "id": "sep-08", "posted": "2026-09-27", "amount": -10.99, "description": "SPOTIFY" },
+  { "source_id": "chase_checking", "id": "sep-09", "posted": "2026-09-28", "amount": -125.0, "description": "STATE FARM" },
+  { "source_id": "chase_checking", "id": "sep-10", "posted": "2026-09-30", "amount": -300.0, "description": "APPLE CARD PAYMENT" }
+]
