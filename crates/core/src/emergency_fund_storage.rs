@@ -142,7 +142,10 @@ mod tests {
         save_emergency_fund_thresholds(&path, &configured_thresholds()).unwrap();
 
         let mut expected = ChecklistStatuses::new();
-        expected.insert("estate_documents".to_string(), ChecklistItemStatus::Complete);
+        expected.insert(
+            "estate_documents".to_string(),
+            ChecklistItemStatus::Complete,
+        );
         let checklist = crate::checklist_storage::load_or_init_checklist_statuses(&path).unwrap();
         assert_eq!(checklist, expected);
 

@@ -146,7 +146,10 @@ mod tests {
         assert_eq!(loaded_emergency_fund, emergency_fund_thresholds);
 
         let mut expected_checklist = ChecklistStatuses::new();
-        expected_checklist.insert("estate_documents".to_string(), ChecklistItemStatus::Complete);
+        expected_checklist.insert(
+            "estate_documents".to_string(),
+            ChecklistItemStatus::Complete,
+        );
         let loaded_checklist = load_or_init_checklist_statuses(&path).unwrap();
         assert_eq!(loaded_checklist, expected_checklist);
 

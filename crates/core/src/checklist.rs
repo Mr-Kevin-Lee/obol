@@ -191,7 +191,10 @@ mod tests {
     #[test]
     fn status_for_returns_the_stored_status_when_present() {
         let mut statuses = ChecklistStatuses::new();
-        statuses.insert("estate_documents".to_string(), ChecklistItemStatus::Complete);
+        statuses.insert(
+            "estate_documents".to_string(),
+            ChecklistItemStatus::Complete,
+        );
         assert_eq!(
             status_for(&statuses, "estate_documents"),
             ChecklistItemStatus::Complete
@@ -201,7 +204,10 @@ mod tests {
     #[test]
     fn completion_summary_counts_complete_items_in_the_numerator() {
         let mut statuses = ChecklistStatuses::new();
-        statuses.insert("estate_documents".to_string(), ChecklistItemStatus::Complete);
+        statuses.insert(
+            "estate_documents".to_string(),
+            ChecklistItemStatus::Complete,
+        );
         statuses.insert(
             "disability_insurance".to_string(),
             ChecklistItemStatus::Complete,

@@ -58,7 +58,10 @@ pub fn band_for_spend(total: f64, thresholds: &MonthlySpendThresholds) -> Thresh
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum CurrentPeriodSpend {
-    Computed { total: f64, band: ThresholdBand },
+    Computed {
+        total: f64,
+        band: ThresholdBand,
+    },
     /// No `Category::Liability` account with `Status::Ok` exists in
     /// this snapshot — distinct from "those accounts exist and sum to
     /// $0" (same "never a bare misleading number" instinct as

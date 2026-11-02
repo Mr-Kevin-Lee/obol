@@ -86,11 +86,8 @@ fn event_loop(
             KeyCode::Char(' ') => {
                 if let Some(item) = CHECKLIST_ITEMS.get(*cursor) {
                     let current = status_for(&statuses, item.id);
-                    let _ = obol_core::set_checklist_item_status(
-                        rules_path,
-                        item.id,
-                        current.cycle(),
-                    );
+                    let _ =
+                        obol_core::set_checklist_item_status(rules_path, item.id, current.cycle());
                 }
             }
             _ => {}

@@ -10,7 +10,9 @@ use crate::rules_storage::{load_or_init_rules_file, save_rules_file, RulesStorag
 /// Loads `rules.yaml`'s `checklist` section, creating a default file
 /// (an empty map — every item defaults to `Incomplete` via
 /// `checklist::status_for`) if it doesn't exist yet.
-pub fn load_or_init_checklist_statuses(path: &Path) -> Result<ChecklistStatuses, RulesStorageError> {
+pub fn load_or_init_checklist_statuses(
+    path: &Path,
+) -> Result<ChecklistStatuses, RulesStorageError> {
     Ok(load_or_init_rules_file(path)?.checklist)
 }
 
@@ -82,8 +84,12 @@ mod tests {
 
         set_checklist_item_status(&path, "estate_documents", ChecklistItemStatus::Complete)
             .unwrap();
-        set_checklist_item_status(&path, "estate_documents", ChecklistItemStatus::NotApplicable)
-            .unwrap();
+        set_checklist_item_status(
+            &path,
+            "estate_documents",
+            ChecklistItemStatus::NotApplicable,
+        )
+        .unwrap();
         let statuses = load_or_init_checklist_statuses(&path).unwrap();
 
         assert_eq!(

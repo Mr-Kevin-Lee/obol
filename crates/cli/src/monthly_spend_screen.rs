@@ -48,8 +48,8 @@ pub fn run(rules_path: &Path, snapshots_dir: &Path) -> io::Result<MonthlySpendAc
 
     let thresholds =
         obol_core::load_or_init_monthly_spend_thresholds(rules_path).unwrap_or_default();
-    let snapshots = obol_core::load_recent_snapshots(snapshots_dir, HISTORY_LIMIT)
-        .unwrap_or_default();
+    let snapshots =
+        obol_core::load_recent_snapshots(snapshots_dir, HISTORY_LIMIT).unwrap_or_default();
     let series = extract_spend_series(&snapshots);
 
     terminal.draw(|frame| draw(frame, &series, &thresholds))?;
@@ -92,7 +92,10 @@ fn draw(frame: &mut Frame, series: &[SpendPoint], thresholds: &MonthlySpendThres
     draw_status_line(frame, areas[1], series, thresholds);
     draw_chart(frame, areas[2], series, thresholds);
 
-    frame.render_widget(Paragraph::new("v: view dashboard   (any other key): quit"), areas[3]);
+    frame.render_widget(
+        Paragraph::new("v: view dashboard   (any other key): quit"),
+        areas[3],
+    );
 }
 
 /// Most recent point's total + band, matching the Dashboard summary's
@@ -126,7 +129,9 @@ fn draw_status_line(
                 ),
             ])
         }
-        None => Line::from(Span::raw("No snapshot history yet — run obol a few times first.")),
+        None => Line::from(Span::raw(
+            "No snapshot history yet — run obol a few times first.",
+        )),
     };
 
     frame.render_widget(
@@ -143,7 +148,12 @@ fn threshold_band_color(band: ThresholdBand) -> Color {
     }
 }
 
-fn draw_chart(frame: &mut Frame, area: Rect, series: &[SpendPoint], thresholds: &MonthlySpendThresholds) {
+fn draw_chart(
+    frame: &mut Frame,
+    area: Rect,
+    series: &[SpendPoint],
+    thresholds: &MonthlySpendThresholds,
+) {
     let points: Vec<(f64, f64)> = series
         .iter()
         .filter_map(|point| {
@@ -162,10 +172,11 @@ fn draw_chart(frame: &mut Frame, area: Rect, series: &[SpendPoint], thresholds: 
         return;
     }
 
-    let (x_min, x_max) = points.iter().fold(
-        (f64::MAX, f64::MIN),
-        |(min, max), (x, _)| (min.min(*x), max.max(*x)),
-    );
+    let (x_min, x_max) = points
+        .iter()
+        .fold((f64::MAX, f64::MIN), |(min, max), (x, _)| {
+            (min.min(*x), max.max(*x))
+        });
     // A single point would otherwise collapse the x-axis to zero width
     // — pad by a day on each side so it still renders.
     const ONE_DAY_SECS: f64 = 86_400.0;
@@ -178,8 +189,14 @@ fn draw_chart(frame: &mut Frame, area: Rect, series: &[SpendPoint], thresholds: 
     let data_max = points.iter().map(|(_, y)| *y).fold(0.0_f64, f64::max);
     let y_max = data_max.max(thresholds.red_at_or_above) * 1.1;
 
-    let yellow_line = [(x_min, thresholds.yellow_at_or_above), (x_max, thresholds.yellow_at_or_above)];
-    let red_line = [(x_min, thresholds.red_at_or_above), (x_max, thresholds.red_at_or_above)];
+    let yellow_line = [
+        (x_min, thresholds.yellow_at_or_above),
+        (x_max, thresholds.yellow_at_or_above),
+    ];
+    let red_line = [
+        (x_min, thresholds.red_at_or_above),
+        (x_max, thresholds.red_at_or_above),
+    ];
 
     let datasets = vec![
         Dataset::default()
@@ -226,10 +243,7 @@ fn draw_chart(frame: &mut Frame, area: Rect, series: &[SpendPoint], thresholds: 
             Axis::default()
                 .style(Style::default().fg(Color::Gray))
                 .bounds([0.0, y_max])
-                .labels(vec![
-                    Span::raw("$0"),
-                    Span::raw(format!("${y_max:.0}")),
-                ]),
+                .labels(vec![Span::raw("$0"), Span::raw(format!("${y_max:.0}"))]),
         );
 
     frame.render_widget(chart, area);

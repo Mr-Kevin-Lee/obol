@@ -64,7 +64,10 @@ pub(crate) fn load_or_init_rules_file(path: &Path) -> Result<RulesFile, RulesSto
 /// mirroring `sources.rs::write_atomically` — deliberately not shared
 /// with it, matching the established "each storage module owns its own
 /// near-identical block" precedent.
-pub(crate) fn save_rules_file(path: &Path, rules_file: &RulesFile) -> Result<(), RulesStorageError> {
+pub(crate) fn save_rules_file(
+    path: &Path,
+    rules_file: &RulesFile,
+) -> Result<(), RulesStorageError> {
     let yaml = serde_saphyr::to_string(rules_file).map_err(RulesStorageError::Serialize)?;
 
     if let Some(dir) = path.parent() {
@@ -100,7 +103,10 @@ mod tests {
         let _ = fs::remove_file(&path);
 
         let rules_file = load_or_init_rules_file(&path).unwrap();
-        assert_eq!(rules_file.emergency_fund, EmergencyFundThresholds::default());
+        assert_eq!(
+            rules_file.emergency_fund,
+            EmergencyFundThresholds::default()
+        );
         assert!(rules_file.checklist.is_empty());
         assert_eq!(rules_file.monthly_spend, MonthlySpendThresholds::default());
         assert_eq!(rules_file.debt_payoff, DebtPayoffConfig::default());
@@ -134,9 +140,10 @@ mod tests {
                 },
             },
         };
-        rules_file
-            .checklist
-            .insert("estate_documents".to_string(), ChecklistItemStatus::Complete);
+        rules_file.checklist.insert(
+            "estate_documents".to_string(),
+            ChecklistItemStatus::Complete,
+        );
 
         save_rules_file(&path, &rules_file).unwrap();
         let loaded = load_or_init_rules_file(&path).unwrap();

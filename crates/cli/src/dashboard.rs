@@ -418,11 +418,9 @@ fn draw_checklist(frame: &mut Frame, area: Rect, statuses: &ChecklistStatuses) {
         .collect();
 
     frame.render_widget(
-        Paragraph::new(lines).block(
-            Block::default()
-                .borders(Borders::ALL)
-                .title(format!("Checklist — {complete}/{total} complete (press 'r' to manage)")),
-        ),
+        Paragraph::new(lines).block(Block::default().borders(Borders::ALL).title(format!(
+            "Checklist — {complete}/{total} complete (press 'r' to manage)"
+        ))),
         area,
     );
 }
@@ -447,7 +445,10 @@ fn draw_group(
         .filter(|record| record.category() == category)
         .collect();
 
-    let items: Vec<ListItem> = matching.iter().map(|record| record_to_list_item(record)).collect();
+    let items: Vec<ListItem> = matching
+        .iter()
+        .map(|record| record_to_list_item(record))
+        .collect();
 
     let list = if items.is_empty() {
         List::new(vec![ListItem::new("(none configured)")])

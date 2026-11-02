@@ -156,7 +156,11 @@ mod tests {
 
     #[test]
     fn no_rates_configured_returns_no_rates_configured_state() {
-        let records = vec![liability_account("chase_credit_card", Some(1000.0), Status::Ok)];
+        let records = vec![liability_account(
+            "chase_credit_card",
+            Some(1000.0),
+            Status::Ok,
+        )];
         let status = evaluate_debt_payoff_priority(&records, &DebtPayoffConfig::default());
 
         assert_eq!(status, DebtPayoffStatus::NoRatesConfigured);
@@ -172,7 +176,11 @@ mod tests {
 
     #[test]
     fn a_liability_at_or_above_threshold_is_flagged() {
-        let records = vec![liability_account("chase_credit_card", Some(4231.0), Status::Ok)];
+        let records = vec![liability_account(
+            "chase_credit_card",
+            Some(4231.0),
+            Status::Ok,
+        )];
         let status = evaluate_debt_payoff_priority(&records, &configured_config());
 
         match status {
@@ -208,7 +216,11 @@ mod tests {
 
     #[test]
     fn a_liability_with_no_configured_rate_is_not_flagged() {
-        let records = vec![liability_account("some_other_card", Some(4231.0), Status::Ok)];
+        let records = vec![liability_account(
+            "some_other_card",
+            Some(4231.0),
+            Status::Ok,
+        )];
         let status = evaluate_debt_payoff_priority(&records, &configured_config());
 
         assert_eq!(status, DebtPayoffStatus::NoHighInterestDebt);
