@@ -77,6 +77,9 @@ impl ProviderError {
 /// trait. `async` because real providers make network calls;
 /// `async_trait` is what makes this dyn-compatible for the registry's
 /// `Box<dyn Provider>` (native async-fn-in-traits isn't).
+// async_trait marks each boxed-future method `#[must_use]`, which newer
+// clippy flags as doubling the future's own `#[must_use]`.
+#[allow(clippy::double_must_use)]
 #[async_trait]
 pub trait Provider: Send + Sync {
     /// Returns balances for this source. Returns `Err` on failure —

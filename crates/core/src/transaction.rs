@@ -31,6 +31,8 @@ pub struct Transaction {
 /// The provider-neutral transaction feed (#38), separate from `Provider`
 /// (§10) so balance-only providers needn't implement it. SimpleFIN's
 /// implementation arrives with #38, after #37 merges.
+// Same async_trait `#[must_use]` false positive as `Provider`'s.
+#[allow(clippy::double_must_use)]
 #[async_trait]
 pub trait TransactionProvider: Send + Sync {
     /// Posted transactions for `source` on or after `since`. Implementations

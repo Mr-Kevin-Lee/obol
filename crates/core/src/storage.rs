@@ -99,7 +99,7 @@ pub fn load_recent_snapshots(dir: &Path, n: usize) -> Result<Vec<Snapshot>, Stor
         })
         .collect();
 
-    entries.sort_by(|a, b| b.0.cmp(&a.0));
+    entries.sort_by_key(|(modified, _)| std::cmp::Reverse(*modified));
 
     let snapshots = entries
         .into_iter()
