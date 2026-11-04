@@ -23,6 +23,8 @@ pub struct StorageLayout {
     pub rules: PathBuf,
     /// SimpleFIN's request log; the CLI keeps it beside `sources.yaml`.
     pub simplefin_usage: PathBuf,
+    /// SimpleFIN accounts the user chose not to link (desktop only).
+    pub simplefin_ignored: PathBuf,
     /// D44: one `YYYY-MM.json` per month (§11.4).
     pub transactions: PathBuf,
     /// D44: merchant key → category (§11.4).
@@ -38,6 +40,7 @@ impl StorageLayout {
             snapshots: root.join("snapshots"),
             rules: root.join("rules.yaml"),
             simplefin_usage: root.join("simplefin_usage.json"),
+            simplefin_ignored: root.join("simplefin_ignored.json"),
             transactions: root.join("transactions"),
             merchant_rules: root.join("merchant_rules.yaml"),
             plan: root.join("plan.yaml"),
@@ -82,6 +85,10 @@ pub struct RefreshResult {
     /// §9.1: persistence is best-effort, so a failed save never blocks
     /// showing what was just fetched — it's surfaced as a warning instead.
     pub save_warning: Option<String>,
+    /// SimpleFIN accounts this refresh linked on its own, one
+    /// `"<institution> <name>"` label each, for a banner. Filled in by the
+    /// `refresh` command; always empty from `refresh_dashboard` itself.
+    pub added_sources: Vec<String>,
 }
 
 /// Fetches every configured source, saves the result, and renders it.
@@ -100,9 +107,11 @@ pub async fn refresh_dashboard(
     // would open on a blank dashboard with the real history hidden behind
     // it. Returning an error leaves the last good view on screen.
     if sources.is_empty() {
-        return Err("no sources are configured, so there's nothing to refresh. \
-             Add one with `obol sources` in a terminal."
-            .to_string());
+        return Err(
+            "no accounts are connected yet, so there's nothing to refresh. \
+             Connect SimpleFIN to add your accounts."
+                .to_string(),
+        );
     }
 
     // Captured before the run saves, matching the TUI: read afterwards,
@@ -128,15 +137,8 @@ pub async fn refresh_dashboard(
             .save_error
             // Shown on its own as a banner, so phrased as a full sentence.
             .map(|err| format!("This refresh was not saved to history: {err}")),
+        added_sources: Vec::new(),
     })
-}
-
-/// The providers a real refresh can reach: SimpleFIN, registered exactly
-/// as the CLI does so both frontends share one request-usage log.
-pub fn production_registry(layout: &StorageLayout) -> HashMap<&'static str, ProviderFactory> {
-    let mut registry = obol_core::provider_registry();
-    obol_core::register_simplefin(&mut registry, layout.simplefin_usage.clone());
-    registry
 }
 
 /// No interactive provider (webdriver, manual entry) exists yet, so
@@ -287,6 +289,7 @@ mod tests {
                 snapshots: "/root/snapshots".into(),
                 rules: "/root/rules.yaml".into(),
                 simplefin_usage: "/root/simplefin_usage.json".into(),
+                simplefin_ignored: "/root/simplefin_ignored.json".into(),
                 transactions: "/root/transactions".into(),
                 merchant_rules: "/root/merchant_rules.yaml".into(),
                 plan: "/root/plan.yaml".into(),
@@ -482,14 +485,5 @@ mod tests {
         let result = refresh_dashboard(&layout, &fixed_balance_registry(500.0)).await;
 
         assert!(result.is_err());
-    }
-
-    // --- production_registry ---
-
-    #[test]
-    fn should_register_the_simplefin_provider() {
-        let registry = production_registry(&StorageLayout::under(Path::new("/root")));
-
-        assert!(registry.contains_key("simplefin"));
     }
 }

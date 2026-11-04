@@ -37,6 +37,51 @@ export interface DashboardView {
 export interface RefreshResult {
   view: DashboardView
   save_warning: string | null
+  /** SimpleFIN accounts this refresh linked on its own, one
+   *  "<institution> <name>" label each; empty most of the time. */
+  added_sources: string[]
+}
+
+// --- Connecting SimpleFIN (connect.rs) ---
+//
+//   invoke<ConnectStatus>('connect_status')
+//   invoke<ConnectPreview>('preview_simplefin', { setupToken })  // setupToken: string | null (null reuses the saved connection)
+//   invoke<LinkResult>('link_simplefin_accounts', { accounts })  // every row, ticked or not; then call 'refresh'
+//
+// `preview_simplefin` with a token claims it, which works only once: on
+// success the token is spent, so the form must not resend it.
+
+export type Side = 'asset' | 'liability'
+
+export interface ConnectAccount {
+  account_id: string
+  institution: string
+  name: string
+  /** SimpleFIN's numeric string, e.g. "-120.50". */
+  balance: string
+  side: Side
+  /** Lowercase snake_case: checking, savings, money_market, credit_card,
+   *  loan, investment, other. */
+  account_type: string
+  /** Ticked in the form. Unticked rows are remembered and never added by
+   *  Refresh. */
+  include: boolean
+}
+
+export interface ConnectPreview {
+  /** Accounts not linked yet, in the Bridge's order. */
+  accounts: ConnectAccount[]
+  /** The Bridge's own error messages, e.g. a bank needing sign-in again. */
+  warnings: string[]
+}
+
+export interface LinkResult {
+  linked: number
+}
+
+export interface ConnectStatus {
+  /** 0 means nothing is connected: offer the connect form. */
+  simplefin_sources: number
 }
 
 // --- Transactions and Spending plan (budget.rs, D44) ---

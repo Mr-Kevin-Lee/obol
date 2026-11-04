@@ -12,7 +12,7 @@ use std::io::{self, Write};
 use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 
-pub(crate) fn write_atomically(path: &Path, bytes: &[u8]) -> io::Result<()> {
+pub fn write_atomically(path: &Path, bytes: &[u8]) -> io::Result<()> {
     if let Some(parent) = path
         .parent()
         .filter(|parent| !parent.as_os_str().is_empty())
