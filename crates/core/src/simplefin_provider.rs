@@ -74,8 +74,10 @@ impl SimpleFinProvider {
     }
 
     /// Holds the lock across the request, so sources fetched concurrently
-    /// still produce a single `GET /accounts`.
-    async fn account_set(
+    /// still produce a single `GET /accounts`. Public so the desktop app's
+    /// linking and new-account discovery share this cache and request
+    /// budget with the refresh that follows.
+    pub async fn account_set(
         &self,
         access_url: &Secret<String>,
     ) -> Result<Arc<AccountSet>, ProviderError> {
@@ -223,6 +225,13 @@ impl Provider for SimpleFinProvider {
 }
 
 pub(crate) const ACCESS_URL_ENV_VAR: &str = "SIMPLEFIN_ACCESS_URL";
+
+/// The Access URL a run would use, resolved the same way the engine does.
+pub fn simplefin_access_url() -> Option<Secret<String>> {
+    resolve_access_url(std::env::var(ACCESS_URL_ENV_VAR).ok(), || {
+        crate::read_simplefin_access_url().ok()
+    })
+}
 
 /// Where the engine finds the Access URL (a dev bridge): the env var wins,
 /// session-scoped and never written to disk (and earns a warning, once per

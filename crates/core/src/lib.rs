@@ -86,7 +86,8 @@ pub use simplefin_link::{
     normalize_account_type, LinkableAccount,
 };
 pub use simplefin_provider::{
-    register as register_simplefin, sanitize as sanitize_server_message, SimpleFinProvider,
+    register as register_simplefin, sanitize as sanitize_server_message, simplefin_access_url,
+    SimpleFinProvider,
 };
 pub use snapshot::{AccountRecord, Category, Snapshot, Status};
 pub use sources::{add_source, edit_source, load_or_init, remove_source, SourcesError};
@@ -94,6 +95,7 @@ pub use storage::{load_recent_snapshots, load_snapshot, save_snapshot, StorageEr
 pub use threshold_band::ThresholdBand;
 
 // D44 (Phase W); see the note on the module list above.
+pub use atomic_write::write_atomically;
 pub use categorize::{
     available_categories, categorize, CategorizedTransaction, INCOME, TRANSFER, UNCATEGORIZED,
 };
