@@ -68,8 +68,10 @@
       tableHeading?.focus()
     } catch (e) {
       error = `Couldn't connect to SimpleFIN: ${e}`
-      // A claimed token is useless; anything else is worth retrying as is.
-      if (/claimed|already used|spent|403|forbidden/i.test(String(e))) token = ''
+      // Only these two backend failures leave the one-time token unspent
+      // (connect.rs); after any other the claim went through, so a retry
+      // has to use the saved connection instead.
+      if (!/wasn't used|didn't accept/.test(String(e))) token = ''
     } finally {
       busy = false
     }

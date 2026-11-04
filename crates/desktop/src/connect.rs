@@ -169,7 +169,12 @@ async fn fetch_accounts(
     simplefin: &SimpleFin,
     pasted: Option<String>,
 ) -> Result<Arc<AccountSet>, String> {
-    let access_url = match setup_token(pasted) {
+    let token = setup_token(pasted);
+    let claimed = token.is_some();
+    // The UI keeps the pasted token only after the two failures worded
+    // "wasn't used" and "didn't accept" (ConnectSimplefin.svelte), since
+    // every later failure means the one-time token is already spent.
+    let access_url = match token {
         Some(token) => {
             obol_core::probe_keychain_writable().map_err(|e| {
                 format!(
@@ -191,11 +196,16 @@ async fn fetch_accounts(
         }
         None => saved_access_url(obol_core::simplefin_access_url())?,
     };
-    simplefin
-        .0
-        .account_set(&access_url)
-        .await
-        .map_err(|e| format!("Your accounts couldn't be fetched from SimpleFIN: {e}."))
+    simplefin.0.account_set(&access_url).await.map_err(|e| {
+        if claimed {
+            format!(
+                "SimpleFIN is connected, but your accounts couldn't be fetched: {e}. \
+                     Try again with your saved connection."
+            )
+        } else {
+            format!("Your accounts couldn't be fetched from SimpleFIN: {e}.")
+        }
+    })
 }
 
 /// A blank paste means "reuse the saved connection".
