@@ -19,6 +19,7 @@ mod rules_storage;
 mod simplefin;
 mod simplefin_link;
 mod simplefin_provider;
+mod simplefin_sync;
 mod simplefin_usage;
 mod snapshot;
 mod sources;
@@ -57,7 +58,9 @@ pub use emergency_fund::{
 pub use emergency_fund_storage::{
     load_or_init_emergency_fund_thresholds, save_emergency_fund_thresholds,
 };
-pub use engine::{run, run_and_save, CredentialSource, RunAndSaveResult};
+pub use engine::{
+    run, run_and_save, run_and_save_with_simplefin_url, CredentialSource, RunAndSaveResult,
+};
 pub use keychain::{
     probe_keychain_writable, read_simplefin_access_url, store_simplefin_access_url, KeychainError,
 };
@@ -77,9 +80,10 @@ pub use provider::{
 };
 pub use retry::{with_retry, RetryConfig, RetryableError};
 pub use rules_storage::RulesStorageError;
+pub use secrecy::{ExposeSecret, Secret};
 pub use simplefin::{
     AccountSet, SimpleFinAccount, SimpleFinApiError, SimpleFinClient, SimpleFinConnection,
-    SimpleFinError,
+    SimpleFinError, SimpleFinTransaction, TransactionWindow,
 };
 pub use simplefin_link::{
     default_account_type, default_category, guess_account, linkable_accounts, new_source,
@@ -88,6 +92,11 @@ pub use simplefin_link::{
 pub use simplefin_provider::{
     register as register_simplefin, sanitize as sanitize_server_message, simplefin_access_url,
     SimpleFinProvider,
+};
+pub use simplefin_sync::{
+    earlier_window, history_windows, load_sync_state, recent_window, record_window,
+    save_sync_state, transactions_in, SourceSync, SyncState, SyncStateError, SyncWindow,
+    FIRST_SYNC_DAYS, OVERLAP_DAYS, WINDOW_DAYS,
 };
 pub use snapshot::{AccountRecord, Category, Snapshot, Status};
 pub use sources::{add_source, edit_source, load_or_init, remove_source, SourcesError};

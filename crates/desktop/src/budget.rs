@@ -14,9 +14,9 @@ use std::path::Path;
 use obol_core::{
     available_categories, categorize, compute_month_plan, display_name, format_iso_date,
     import_simplifi_export, load_or_init_merchant_rules, load_or_init_plan, load_recent_snapshots,
-    load_transactions_range, merchant_key, save_plan, set_merchant_category, suggest_series,
-    CategorizedTransaction, Date, MerchantRules, PaymentStatus, PlanConfig, RecurringSeries,
-    SeriesKind, YearMonth, INCOME, TRANSFER, UNCATEGORIZED,
+    load_sync_state, load_transactions_range, merchant_key, save_plan, set_merchant_category,
+    suggest_series, CategorizedTransaction, Date, MerchantRules, PaymentStatus, PlanConfig,
+    RecurringSeries, SeriesKind, YearMonth, INCOME, TRANSFER, UNCATEGORIZED,
 };
 use serde::Serialize;
 
@@ -66,6 +66,10 @@ pub struct TransactionsView {
     /// row's current category, `Income`, `Transfer` and `Uncategorized`
     /// included, so a picker never lacks the value it's showing.
     pub available_categories: Vec<String>,
+    /// `YYYY-MM-DD`: the earliest day SimpleFIN transactions have been
+    /// fetched for, so the screen can offer to load earlier ones. `None`
+    /// before the first sync.
+    pub simplefin_history_from: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -157,7 +161,19 @@ pub fn transactions_view(
             .filter(|transaction| transaction.category == UNCATEGORIZED)
             .count(),
         available_categories: available_categories(&rules),
+        simplefin_history_from: simplefin_history_from(layout),
     })
+}
+
+/// A nicety, so an unreadable sync file only hides the "load earlier" offer.
+fn simplefin_history_from(layout: &StorageLayout) -> Option<String> {
+    load_sync_state(&layout.simplefin_sync)
+        .ok()?
+        .sources
+        .values()
+        .map(|synced| synced.from)
+        .min()
+        .map(format_iso_date)
 }
 
 /// `today` comes from the webview — the local date as the user's clock
@@ -1385,6 +1401,35 @@ mod tests {
         assert!(
             add_series(&layout, "Comcast", SeriesKind::Bill, 0.0, 12).is_err()
                 && add_series(&layout, "Comcast", SeriesKind::Bill, 82.5, 0).is_err()
+        );
+    }
+
+    #[test]
+    fn should_have_no_simplefin_history_before_a_sync() {
+        let layout = temp_layout("history-none");
+
+        assert_eq!(
+            transactions_view(&layout, october())
+                .unwrap()
+                .simplefin_history_from,
+            None
+        );
+    }
+
+    #[test]
+    fn should_show_the_earliest_simplefin_day_fetched() {
+        let layout = temp_layout("history-from");
+        fs::write(
+            &layout.simplefin_sync,
+            r#"{"sources":{"a":{"from":"2026-05-08","through":"2026-11-04"},"b":{"from":"2026-04-01","through":"2026-11-04"}}}"#,
+        )
+        .unwrap();
+
+        assert_eq!(
+            transactions_view(&layout, october())
+                .unwrap()
+                .simplefin_history_from,
+            Some("2026-04-01".to_string())
         );
     }
 

@@ -3,7 +3,7 @@
   import CategoryBars from './CategoryBars.svelte'
   import { insideApp, notInAppMessage } from './backend'
   import { formatDate, formatMoney, formatMonth, formatSignedMoney } from './format'
-  import type { ImportResult, TransactionRow, TransactionsView } from './types'
+  import type { EarlierResult, ImportResult, TransactionRow, TransactionsView } from './types'
 
   let { month }: { month: string } = $props()
 
@@ -81,6 +81,28 @@
       error = `Couldn't import the Simplifi export: ${e}`
     } finally {
       importing = false
+    }
+  }
+
+  let loadingEarlier = $state(false)
+  let earlierNote = $state<string | null>(null)
+
+  // One more SimpleFIN request each time: the 90 days before what's fetched.
+  async function loadEarlier() {
+    loadingEarlier = true
+    error = null
+    earlierNote = null
+    try {
+      const result = await invoke<EarlierResult>('load_earlier_transactions')
+      earlierNote =
+        result.added > 0
+          ? `Loaded ${result.added} earlier transactions.`
+          : `SimpleFIN had no transactions in the 3 months before ${formatDate(view?.simplefin_history_from ?? result.history_from)}.`
+      await load(month)
+    } catch (e) {
+      error = `Couldn't load earlier transactions: ${e}`
+    } finally {
+      loadingEarlier = false
     }
   }
 
@@ -180,6 +202,20 @@
   </section>
 {/if}
 
+{#if !loading && view?.simplefin_history_from}
+  <section class="history" aria-label="SimpleFIN history">
+    <p>
+      Transactions from SimpleFIN go back to {formatDate(view.simplefin_history_from)}.
+    </p>
+    <button type="button" class="secondary" onclick={loadEarlier} disabled={loadingEarlier}>
+      {loadingEarlier ? 'Loading…' : 'Load 3 earlier months'}
+    </button>
+  </section>
+{/if}
+{#if earlierNote}
+  <p class="earlier-note" role="status">{earlierNote}</p>
+{/if}
+
 {#if !loading && insideApp()}
   <section class="card" aria-labelledby="import-heading">
     <h2 id="import-heading">Import from Simplifi</h2>
@@ -206,6 +242,31 @@
 {/if}
 
 <style>
+  .history {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+    margin: 1rem 0 0;
+    font-size: 0.8125rem;
+    color: var(--text-muted);
+  }
+
+  .history p {
+    margin: 0;
+  }
+
+  .history button {
+    font-size: 0.8125rem;
+    padding: 0.25rem 0.75rem;
+  }
+
+  .earlier-note {
+    margin: 0.5rem 0 0;
+    font-size: 0.8125rem;
+    color: var(--positive);
+  }
+
   .import {
     display: flex;
     flex-wrap: wrap;

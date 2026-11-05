@@ -16,7 +16,9 @@ use secrecy::{ExposeSecret, Secret};
 use tokio::sync::Mutex;
 
 use crate::pii::hash_account_number;
-use crate::simplefin::{AccountSet, SimpleFinAccount, SimpleFinClient, SimpleFinError};
+use crate::simplefin::{
+    AccountSet, SimpleFinAccount, SimpleFinClient, SimpleFinError, TransactionWindow,
+};
 use crate::simplefin_usage::{load_usage_log, save_usage_log};
 use crate::{Account, AccountStatus, Asset, Category, Credentials, Liability};
 use crate::{Provider, ProviderError, ProviderFactory, SourceConfig};
@@ -101,6 +103,35 @@ impl SimpleFinProvider {
             fetched_at: Instant::now(),
             result: result.clone(),
         });
+        result
+    }
+
+    /// One budgeted request for every balance plus the transactions in
+    /// `window`. An open-ended window over every account replaces the
+    /// cache, so the snapshot run right after reuses it instead of asking
+    /// again; a history window doesn't, since it's not a current view.
+    pub async fn transactions(
+        &self,
+        access_url: &Secret<String>,
+        window: &TransactionWindow,
+    ) -> Result<Arc<AccountSet>, ProviderError> {
+        // Held across the request, like `account_set`, so a fetch arriving
+        // meanwhile waits for this answer instead of sending its own.
+        let mut cache = self.cache.lock().await;
+        self.reserve_request()?;
+        let result = self
+            .client
+            .get_accounts(access_url, window)
+            .await
+            .map(Arc::new)
+            .map_err(map_simplefin_error);
+        if window.end.is_none() && window.accounts.is_empty() {
+            *cache = Some(CachedSet {
+                access_url: Secret::new(access_url.expose_secret().clone()),
+                fetched_at: Instant::now(),
+                result: result.clone(),
+            });
+        }
         result
     }
 
@@ -424,6 +455,91 @@ mod tests {
 
         let _ = fetch_chk(&provider, &server).await;
         let _ = fetch_chk(&provider, &server).await;
+    }
+
+    fn open_window() -> TransactionWindow {
+        TransactionWindow {
+            start: 1_700_000_000,
+            end: None,
+            accounts: vec![],
+        }
+    }
+
+    #[tokio::test]
+    async fn an_open_transactions_window_is_reused_by_the_next_fetch() {
+        let server = MockServer::start().await;
+        mount_expecting(&server, 200, 1).await;
+        let provider = SimpleFinProvider::new(SimpleFinClient::default());
+
+        provider
+            .transactions(&credentials_for(&server).0, &open_window())
+            .await
+            .unwrap();
+        fetch_chk(&provider, &server).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn a_history_window_is_not_reused_by_the_next_fetch() {
+        let server = MockServer::start().await;
+        mount_expecting(&server, 200, 2).await;
+        let provider = SimpleFinProvider::new(SimpleFinClient::default());
+        let history = TransactionWindow {
+            end: Some(1_707_776_000),
+            ..open_window()
+        };
+
+        provider
+            .transactions(&credentials_for(&server).0, &history)
+            .await
+            .unwrap();
+        fetch_chk(&provider, &server).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn a_window_for_some_accounts_is_not_reused_by_the_next_fetch() {
+        let server = MockServer::start().await;
+        mount_expecting(&server, 200, 2).await;
+        let provider = SimpleFinProvider::new(SimpleFinClient::default());
+        let filtered = TransactionWindow {
+            accounts: vec!["acc_chk".into()],
+            ..open_window()
+        };
+
+        provider
+            .transactions(&credentials_for(&server).0, &filtered)
+            .await
+            .unwrap();
+        fetch_chk(&provider, &server).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn a_transactions_request_counts_against_the_budget() {
+        let server = MockServer::start().await;
+        mount_expecting(&server, 200, 1).await;
+        let path = usage_path("transactions-budget");
+        let provider = provider_with_usage(&path, 1);
+
+        provider
+            .transactions(&credentials_for(&server).0, &open_window())
+            .await
+            .unwrap();
+        let err = fetch_chk(&provider, &server).await.unwrap_err();
+
+        assert!(err.to_string().contains("budget"), "got: {err}");
+    }
+
+    #[tokio::test]
+    async fn a_transactions_request_past_the_cap_never_reaches_the_bridge() {
+        let server = MockServer::start().await;
+        mount_expecting(&server, 200, 0).await;
+        let path = usage_path("transactions-cap");
+        let provider = provider_with_usage(&path, 0);
+
+        let result = provider
+            .transactions(&credentials_for(&server).0, &open_window())
+            .await;
+
+        assert!(result.is_err());
     }
 
     #[tokio::test]

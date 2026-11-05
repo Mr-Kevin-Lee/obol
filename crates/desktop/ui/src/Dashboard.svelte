@@ -13,6 +13,7 @@
   let refreshing = $state(false)
   let error = $state<string | null>(null)
   let saveWarning = $state<string | null>(null)
+  let syncWarning = $state<string | null>(null)
 
   // null until known (or if the check fails): then only "Add accounts" shows.
   let simplefinSources = $state<number | null>(null)
@@ -54,11 +55,13 @@
     refreshing = true
     error = null
     saveWarning = null
+    syncWarning = null
     try {
       const result = await invoke<RefreshResult>('refresh')
       view = result.view
       // §9.1: a failed save never hides the fetch, it just gets flagged.
       saveWarning = result.save_warning
+      syncWarning = result.sync_warning
       // Kept until dismissed, so a later quiet refresh doesn't hide it.
       if (result.added_sources.length > 0) addedSources = result.added_sources
     } catch (e) {
@@ -108,6 +111,9 @@
 {/if}
 {#if saveWarning}
   <div class="banner warning" role="status">{saveWarning}</div>
+{/if}
+{#if syncWarning}
+  <div class="banner warning" role="status">{syncWarning}</div>
 {/if}
 {#if linked}
   <div class="banner notice" role="status">{linked}</div>

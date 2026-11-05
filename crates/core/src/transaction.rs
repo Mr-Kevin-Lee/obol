@@ -163,7 +163,7 @@ fn is_digits(text: &str, len: usize) -> bool {
 
 /// `#[serde(with)]` adapter so `posted` is stored as `YYYY-MM-DD`, using
 /// only `time` features core already enables.
-mod iso_date {
+pub(crate) mod iso_date {
     use super::{format_iso_date, parse_iso_date};
     use serde::{de, Deserialize, Deserializer, Serializer};
     use time::Date;

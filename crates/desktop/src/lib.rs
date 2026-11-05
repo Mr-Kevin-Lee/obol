@@ -9,6 +9,7 @@ pub mod budget;
 pub mod connect;
 pub mod dashboard;
 pub mod simplefin;
+pub mod sync;
 pub mod view;
 
 #[cfg(test)]
@@ -40,7 +41,8 @@ fn parse_day(text: &str) -> Result<Date, String> {
 }
 
 /// Serializes every read-modify-write the app makes: `merchant_rules.yaml`,
-/// `plan.yaml`, and `sources.yaml` with the SimpleFIN ignore list. Two
+/// `plan.yaml`, `sources.yaml` with the SimpleFIN ignore list, and the
+/// transaction files with their sync record. Two
 /// quick edits would otherwise race: both read, both write, and the first
 /// edit is lost. In-process only — §9.1's file lock has no production
 /// callers yet. The CLI can write `sources.yaml` too, but not while you're
@@ -66,22 +68,57 @@ async fn get_dashboard() -> Result<Option<DashboardView>, String> {
     dashboard::load_dashboard(&storage_layout()?)
 }
 
-/// Fetches every configured source fresh (D43, superseding D19), first
-/// linking any SimpleFIN account opened since the last refresh. Discovery
-/// and the run share one request through the shared provider's cache.
+fn today() -> Date {
+    // UTC, like the posting dates SimpleFIN transactions are stored under.
+    time::OffsetDateTime::now_utc().date()
+}
+
+/// Fetches every configured source fresh (D43, superseding D19). First the
+/// SimpleFIN half: one request for balances and recent transactions, which
+/// the snapshot run then reuses, plus linking accounts opened since and
+/// fetching any history still missing.
 #[tauri::command]
 async fn refresh(
     lock: tauri::State<'_, WriteLock>,
     simplefin: tauri::State<'_, SimpleFin>,
 ) -> Result<RefreshResult, String> {
     let layout = storage_layout()?;
-    let added = match auto_link::fetch_for_auto_link(&layout, &simplefin).await {
-        Some(set) => locked(&lock, || auto_link::auto_link_new_accounts(&layout, &set))?,
-        None => Vec::new(),
+    let access_url = simplefin.access_url().await;
+    let outcome = match &access_url {
+        Some(url) => {
+            let bridge = sync::SharedBridge {
+                simplefin: &simplefin,
+                access_url: url,
+            };
+            sync::sync_on_refresh(&layout, &bridge, &lock.0, today()).await?
+        }
+        None => sync::SyncOutcome::default(),
     };
-    let mut result = dashboard::refresh_dashboard(&layout, &simplefin.registry()).await?;
-    result.added_sources = added;
+    let mut result =
+        dashboard::refresh_dashboard(&layout, &simplefin.registry(), access_url).await?;
+    result.added_sources = outcome.added_sources;
+    result.transactions_added = outcome.transactions_added;
+    result.sync_warning = outcome.warning;
     Ok(result)
+}
+
+/// One more request: the 90 days of SimpleFIN transactions before the
+/// earliest day fetched.
+#[tauri::command]
+async fn load_earlier_transactions(
+    lock: tauri::State<'_, WriteLock>,
+    simplefin: tauri::State<'_, SimpleFin>,
+) -> Result<sync::EarlierResult, String> {
+    let layout = storage_layout()?;
+    let access_url = simplefin
+        .access_url()
+        .await
+        .ok_or("SimpleFIN isn't connected, so there's no history to load.")?;
+    let bridge = sync::SharedBridge {
+        simplefin: &simplefin,
+        access_url: &access_url,
+    };
+    sync::load_earlier(&layout, &bridge, &lock.0, today()).await
 }
 
 /// Whether the Net worth screen should offer to connect SimpleFIN.
@@ -235,6 +272,7 @@ pub fn run() {
             connect_status,
             preview_simplefin,
             link_simplefin_accounts,
+            load_earlier_transactions,
             get_transactions,
             set_merchant_category,
             import_simplifi,

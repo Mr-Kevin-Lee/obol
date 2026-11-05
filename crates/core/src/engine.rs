@@ -200,7 +200,25 @@ pub async fn run_and_save(
     credential_source: &dyn CredentialSource,
     storage_dir: &Path,
 ) -> RunAndSaveResult {
-    let snapshot = run(sources, registry, credential_source).await;
+    saved(run(sources, registry, credential_source).await, storage_dir)
+}
+
+/// `run_and_save` with the SimpleFIN Access URL already in hand, for a
+/// caller that keeps it in memory: every Keychain read can ask for the
+/// login password while the app isn't signed (#28), so the desktop app
+/// reads it once per launch rather than once per refresh.
+pub async fn run_and_save_with_simplefin_url(
+    sources: &[SourceConfig],
+    registry: &HashMap<&'static str, ProviderFactory>,
+    credential_source: &dyn CredentialSource,
+    storage_dir: &Path,
+    simplefin_url: Option<secrecy::Secret<String>>,
+) -> RunAndSaveResult {
+    let snapshot = run_with(sources, registry, credential_source, None, || simplefin_url).await;
+    saved(snapshot, storage_dir)
+}
+
+fn saved(snapshot: Snapshot, storage_dir: &Path) -> RunAndSaveResult {
     let save_error = crate::save_snapshot(storage_dir, &snapshot).err();
     RunAndSaveResult {
         snapshot,
@@ -679,6 +697,57 @@ mod tests {
         );
     }
 
+    fn scratch_dir(name: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "obol-engine-with-url-{name}-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        dir
+    }
+
+    #[tokio::test]
+    async fn every_simplefin_source_gets_the_url_handed_in() {
+        let seen = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let credential_source = FakeCredentialSource {
+            calls: Arc::new(AtomicUsize::new(0)),
+        };
+
+        run_and_save_with_simplefin_url(
+            &three_simplefin_sources(),
+            &recording_registry(&seen),
+            &credential_source,
+            &scratch_dir("url"),
+            Some(secrecy::Secret::new("https://in-memory".to_string())),
+        )
+        .await;
+
+        assert_eq!(
+            seen.lock().unwrap().clone(),
+            vec![Some("https://in-memory".to_string()); 3]
+        );
+    }
+
+    #[tokio::test]
+    async fn a_run_with_a_url_handed_in_saves_its_snapshot() {
+        let seen = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let credential_source = FakeCredentialSource {
+            calls: Arc::new(AtomicUsize::new(0)),
+        };
+        let dir = scratch_dir("saves");
+
+        run_and_save_with_simplefin_url(
+            &three_simplefin_sources(),
+            &recording_registry(&seen),
+            &credential_source,
+            &dir,
+            None,
+        )
+        .await;
+
+        assert_eq!(crate::load_recent_snapshots(&dir, 5).unwrap().len(), 1);
+    }
+
     #[tokio::test]
     async fn the_keychain_is_not_read_when_no_source_uses_simplefin() {
         let registry: HashMap<&'static str, ProviderFactory> = HashMap::new();
@@ -841,6 +910,10 @@ mod tests {
         };
 
         tracing::subscriber::with_default(subscriber, || {
+            // A parallel test logging with no subscriber can cache these
+            // callsites as never-enabled, which would drop this test's
+            // events and fail it intermittently (seen 1 in 30 full runs).
+            tracing::callsite::rebuild_interest_cache();
             log_outcome(&ok_record);
             log_outcome(&bad_record);
         });
