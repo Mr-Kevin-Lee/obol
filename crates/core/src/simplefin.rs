@@ -64,6 +64,33 @@ pub struct SimpleFinAccount {
     pub conn_id: String,
     /// A numeric string, per the protocol.
     pub balance: String,
+    /// Empty for a balances-only request.
+    #[serde(default)]
+    pub transactions: Vec<SimpleFinTransaction>,
+}
+
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct SimpleFinTransaction {
+    /// Unique within its account, never across accounts.
+    pub id: String,
+    /// Unix seconds; may be 0 while pending.
+    pub posted: i64,
+    /// A numeric string; positive is money in.
+    pub amount: String,
+    pub description: String,
+    #[serde(default)]
+    pub pending: bool,
+}
+
+/// The transactions a `get_accounts` request asks for: those posted on or
+/// after `start` and before `end` (Unix seconds), for `accounts`, or for
+/// every account when that's empty. The Bridge serves at most 90 days per
+/// request.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct TransactionWindow {
+    pub start: i64,
+    pub end: Option<i64>,
+    pub accounts: Vec<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -132,6 +159,28 @@ impl SimpleFinClient {
         &self,
         access_url: &Secret<String>,
     ) -> Result<AccountSet, SimpleFinError> {
+        self.fetch_accounts(access_url, &[("balances-only", "1".to_string())])
+            .await
+    }
+
+    /// `GET <access url>/accounts?version=2&start-date=…`: balances plus
+    /// the posted transactions in `window`. Pending ones aren't requested.
+    pub async fn get_accounts(
+        &self,
+        access_url: &Secret<String>,
+        window: &TransactionWindow,
+    ) -> Result<AccountSet, SimpleFinError> {
+        let mut query = vec![("start-date", window.start.to_string())];
+        query.extend(window.end.map(|end| ("end-date", end.to_string())));
+        query.extend(window.accounts.iter().map(|id| ("account", id.clone())));
+        self.fetch_accounts(access_url, &query).await
+    }
+
+    async fn fetch_accounts(
+        &self,
+        access_url: &Secret<String>,
+        query: &[(&str, String)],
+    ) -> Result<AccountSet, SimpleFinError> {
         let mut url =
             Url::parse(access_url.expose_secret()).map_err(|_| SimpleFinError::InvalidAccessUrl)?;
         require_secure(&url)?;
@@ -141,7 +190,7 @@ impl SimpleFinClient {
             .push("accounts");
         url.query_pairs_mut()
             .append_pair("version", "2")
-            .append_pair("balances-only", "1");
+            .extend_pairs(query);
 
         let response = self.http.get(url).send().await.map_err(transport_error)?;
         match response.status().as_u16() {
@@ -175,7 +224,7 @@ fn require_secure(url: &Url) -> Result<(), SimpleFinError> {
 mod tests {
     use super::*;
     use serde_json::json;
-    use wiremock::matchers::{header, method, path, query_param};
+    use wiremock::matchers::{header, method, path, query_param, query_param_is_missing};
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
     /// `http://user:pass@127.0.0.1:<port><path>` for the mock server.
@@ -450,6 +499,183 @@ mod tests {
             err,
             SimpleFinError::UnexpectedStatus { status: 302 }
         ));
+    }
+
+    fn window(start: i64, end: Option<i64>, accounts: &[&str]) -> TransactionWindow {
+        TransactionWindow {
+            start,
+            end,
+            accounts: accounts.iter().map(|a| a.to_string()).collect(),
+        }
+    }
+
+    fn with_transactions(transactions: serde_json::Value) -> serde_json::Value {
+        let mut body = accounts_body();
+        body["accounts"][0]["transactions"] = transactions;
+        body
+    }
+
+    async fn get_accounts_from(
+        server: &MockServer,
+        window: &TransactionWindow,
+    ) -> Result<AccountSet, SimpleFinError> {
+        SimpleFinClient::default()
+            .get_accounts(&access_url_for(server, "/simplefin"), window)
+            .await
+    }
+
+    #[tokio::test]
+    async fn get_accounts_sends_the_window_dates() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/simplefin/accounts"))
+            .and(header("authorization", "Basic dXNlcjpwYXNz"))
+            .and(query_param("version", "2"))
+            .and(query_param("start-date", "1700000000"))
+            .and(query_param("end-date", "1707776000"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(accounts_body()))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        get_accounts_from(&server, &window(1_700_000_000, Some(1_707_776_000), &[]))
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn get_accounts_leaves_out_an_open_end_date() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(query_param_is_missing("end-date"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(accounts_body()))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        get_accounts_from(&server, &window(1_700_000_000, None, &[]))
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn get_accounts_asks_for_transactions() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(query_param_is_missing("balances-only"))
+            .and(query_param_is_missing("pending"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(accounts_body()))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        get_accounts_from(&server, &window(1_700_000_000, None, &[]))
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn get_accounts_filters_to_each_listed_account() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(query_param("account", "acc_1"))
+            .and(query_param("account", "acc_2"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(accounts_body()))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        get_accounts_from(&server, &window(1_700_000_000, None, &["acc_1", "acc_2"]))
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn get_accounts_sends_no_account_filter_for_every_account() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(query_param_is_missing("account"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(accounts_body()))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        get_accounts_from(&server, &window(1_700_000_000, None, &[]))
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn get_accounts_parses_transactions() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_json(with_transactions(json!([
+                    { "id": "t1", "posted": 1_700_000_100, "amount": "-12.50",
+                      "description": "CORNER CAFE", "transacted_at": 1_700_000_000 }
+                ]))),
+            )
+            .mount(&server)
+            .await;
+
+        let set = get_accounts_from(&server, &window(1_700_000_000, None, &[]))
+            .await
+            .unwrap();
+
+        assert_eq!(
+            set.accounts[0].transactions,
+            [SimpleFinTransaction {
+                id: "t1".into(),
+                posted: 1_700_000_100,
+                amount: "-12.50".into(),
+                description: "CORNER CAFE".into(),
+                pending: false,
+            }]
+        );
+    }
+
+    #[tokio::test]
+    async fn get_accounts_reads_a_pending_flag() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(with_transactions(json!([
+                { "id": "t1", "posted": 0, "amount": "-1.00", "description": "X", "pending": true }
+            ]))))
+            .mount(&server)
+            .await;
+
+        let set = get_accounts_from(&server, &window(1_700_000_000, None, &[]))
+            .await
+            .unwrap();
+
+        assert!(set.accounts[0].transactions[0].pending);
+    }
+
+    #[tokio::test]
+    async fn get_accounts_maps_a_403_to_access_denied() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .respond_with(ResponseTemplate::new(403))
+            .mount(&server)
+            .await;
+
+        let err = get_accounts_from(&server, &window(1_700_000_000, None, &[]))
+            .await
+            .unwrap_err();
+
+        assert!(matches!(err, SimpleFinError::AccessDenied(403)));
+    }
+
+    #[tokio::test]
+    async fn get_accounts_rejects_a_plain_http_non_loopback_url() {
+        let url = Secret::new("http://u:p@bridge.example.com/simplefin".to_string());
+
+        let err = SimpleFinClient::default()
+            .get_accounts(&url, &window(1_700_000_000, None, &[]))
+            .await
+            .unwrap_err();
+
+        assert!(matches!(err, SimpleFinError::InsecureUrl));
     }
 
     #[tokio::test]

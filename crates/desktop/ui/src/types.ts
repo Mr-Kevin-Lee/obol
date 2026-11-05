@@ -40,6 +40,21 @@ export interface RefreshResult {
   /** SimpleFIN accounts this refresh linked on its own, one
    *  "<institution> <name>" label each; empty most of the time. */
   added_sources: string[]
+  /** New SimpleFIN transactions this refresh saved. */
+  transactions_added: number
+  /** Why some older SimpleFIN transactions are still missing; a later
+   *  refresh fetches them. */
+  sync_warning: string | null
+}
+
+// --- SimpleFIN transaction history (sync.rs) ---
+//
+//   invoke<EarlierResult>('load_earlier_transactions')  // one more request: the 90 days before the earliest day fetched
+
+export interface EarlierResult {
+  added: number
+  /** 'YYYY-MM-DD': how far back SimpleFIN history now reaches. */
+  history_from: string
 }
 
 // --- Connecting SimpleFIN (connect.rs) ---
@@ -138,6 +153,9 @@ export interface TransactionsView {
   /** Display order. Always contains every row's current category,
    *  'Income', 'Transfer' and 'Uncategorized' included. */
   available_categories: string[]
+  /** 'YYYY-MM-DD': the earliest day SimpleFIN transactions have been
+   *  fetched for; null before the first sync. */
+  simplefin_history_from: string | null
 }
 
 export interface ImportResult {

@@ -1049,7 +1049,20 @@ pub struct Transaction {
   no `pending` field, so storage can't hold one.
 - **Provider-neutral.** A `TransactionProvider` trait, separate from
   `Provider` (§10), so balance-only providers needn't implement it.
-  SimpleFIN's implementation arrives with #38, after #37.
+  SimpleFIN doesn't use it: one SimpleFIN request returns every account's
+  balance and transactions together, so it syncs as below instead of per
+  source.
+- **SimpleFIN sync (#38).** Every Refresh sends one request for every
+  balance plus the transactions from 7 days before the last day already
+  fetched, so late postings arrive; the snapshot run then reuses that
+  request. An account fetched for the first time is backfilled six months,
+  in requests filtered to it. The Bridge serves at most 90 days per request,
+  so longer spans are split, newest first: a failed request leaves the
+  account's fetched range where the next Refresh resumes. "Load earlier" on
+  the Transactions screen fetches the 90 days before the earliest day
+  fetched, one request per press. `simplefin_sync.json` records each
+  source's fetched range. Every request counts against the Bridge's daily
+  request budget (#37).
 - **Storage.** One JSON file per calendar month,
   `transactions/YYYY-MM.json`, upserted on (`source_id`, `id`). Same
   protections as every other file here (§4): atomic temp-file-plus-rename

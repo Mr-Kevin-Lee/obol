@@ -182,6 +182,7 @@ mod tests {
                     name: name.to_string(),
                     conn_id: conn.to_string(),
                     balance: balance.to_string(),
+                    transactions: vec![],
                 })
                 .collect(),
         }

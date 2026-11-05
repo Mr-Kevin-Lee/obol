@@ -1,10 +1,12 @@
-//! SimpleFIN plumbing shared by connecting, linking, new-account discovery
-//! and Refresh.
+//! SimpleFIN plumbing shared by connecting, linking, Refresh and loading
+//! earlier transactions.
 //!
-//! The app keeps one `SimpleFinProvider` for its whole lifetime, so all four
+//! The app keeps one `SimpleFinProvider` for its whole lifetime, so they all
 //! share its 60-second account cache and its request budget (the Bridge
 //! asks for 24 or fewer requests a day) instead of each sending its own
-//! `GET /accounts`.
+//! `GET /accounts`. It also keeps the Access URL in memory once read, since
+//! every Keychain read can ask for the login password while the app isn't
+//! signed (#28).
 
 use std::collections::{BTreeSet, HashMap};
 use std::io;
@@ -14,26 +16,53 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use obol_core::{
     default_account_type, default_category, Account, Category, Credentials, LinkableAccount,
-    Provider, ProviderError, ProviderFactory, SimpleFinClient, SimpleFinProvider, SourceConfig,
+    Provider, ProviderError, ProviderFactory, Secret, SimpleFinClient, SimpleFinProvider,
+    SourceConfig,
 };
+use tokio::sync::Mutex;
 
 use crate::dashboard::StorageLayout;
 
-pub struct SimpleFin(pub Arc<SimpleFinProvider>);
+pub struct SimpleFin {
+    pub provider: Arc<SimpleFinProvider>,
+    access_url: Mutex<Option<Secret<String>>>,
+}
 
 impl SimpleFin {
     /// Requests are counted in `usage_path`, the same log the CLI uses.
     pub fn new(usage_path: PathBuf) -> Self {
-        Self(Arc::new(SimpleFinProvider::with_usage_log(
-            SimpleFinClient::default(),
-            usage_path,
-        )))
+        Self {
+            provider: Arc::new(SimpleFinProvider::with_usage_log(
+                SimpleFinClient::default(),
+                usage_path,
+            )),
+            access_url: Mutex::new(None),
+        }
+    }
+
+    /// The Access URL: the one remembered this launch, else read once (env
+    /// var, then Keychain) and remembered. `None` if there's none, so a
+    /// later call tries again.
+    pub async fn access_url(&self) -> Option<Secret<String>> {
+        // Held across the read, so two commands arriving together cause
+        // one Keychain prompt, not two.
+        let mut remembered = self.access_url.lock().await;
+        if remembered.is_none() {
+            *remembered = obol_core::simplefin_access_url();
+        }
+        remembered.clone()
+    }
+
+    /// Keeps a freshly claimed Access URL, so nothing reads it back from
+    /// the Keychain this launch.
+    pub async fn remember(&self, access_url: Secret<String>) {
+        *self.access_url.lock().await = Some(access_url);
     }
 
     /// The registry a refresh runs with: core's, plus this shared provider.
     pub fn registry(&self) -> HashMap<&'static str, ProviderFactory> {
         let mut registry = obol_core::provider_registry();
-        let shared = Arc::clone(&self.0);
+        let shared = Arc::clone(&self.provider);
         registry.insert(
             "simplefin",
             Box::new(move || Box::new(Shared(Arc::clone(&shared))) as Box<dyn Provider>),
@@ -123,7 +152,23 @@ mod tests {
         let _second = registry["simplefin"]();
 
         // Ours, the registry closure's, and one per provider handed out.
-        assert_eq!(Arc::strong_count(&simplefin.0), 4);
+        assert_eq!(Arc::strong_count(&simplefin.provider), 4);
+    }
+
+    #[tokio::test]
+    async fn should_hand_back_a_remembered_access_url() {
+        use obol_core::ExposeSecret;
+        let simplefin = SimpleFin::new(Path::new("/root/simplefin_usage.json").into());
+        simplefin
+            .remember(Secret::new("https://remembered".to_string()))
+            .await;
+
+        let url = simplefin.access_url().await;
+
+        assert_eq!(
+            url.map(|url| url.expose_secret().clone()),
+            Some("https://remembered".to_string())
+        );
     }
 
     #[test]

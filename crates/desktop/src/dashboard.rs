@@ -25,6 +25,8 @@ pub struct StorageLayout {
     pub simplefin_usage: PathBuf,
     /// SimpleFIN accounts the user chose not to link (desktop only).
     pub simplefin_ignored: PathBuf,
+    /// Which days of SimpleFIN transactions each source has (desktop only).
+    pub simplefin_sync: PathBuf,
     /// D44: one `YYYY-MM.json` per month (§11.4).
     pub transactions: PathBuf,
     /// D44: merchant key → category (§11.4).
@@ -41,6 +43,7 @@ impl StorageLayout {
             rules: root.join("rules.yaml"),
             simplefin_usage: root.join("simplefin_usage.json"),
             simplefin_ignored: root.join("simplefin_ignored.json"),
+            simplefin_sync: root.join("simplefin_sync.json"),
             transactions: root.join("transactions"),
             merchant_rules: root.join("merchant_rules.yaml"),
             plan: root.join("plan.yaml"),
@@ -89,12 +92,21 @@ pub struct RefreshResult {
     /// `"<institution> <name>"` label each, for a banner. Filled in by the
     /// `refresh` command; always empty from `refresh_dashboard` itself.
     pub added_sources: Vec<String>,
+    /// New SimpleFIN transactions saved by this refresh. Filled in by the
+    /// `refresh` command, like `added_sources`.
+    pub transactions_added: usize,
+    /// Why some older SimpleFIN transactions are still missing (they're
+    /// fetched on a later refresh). Filled in by the `refresh` command.
+    pub sync_warning: Option<String>,
 }
 
 /// Fetches every configured source, saves the result, and renders it.
+/// `simplefin_url` is the Access URL the app already holds, so the run
+/// never reads the Keychain itself.
 pub async fn refresh_dashboard(
     layout: &StorageLayout,
     registry: &HashMap<&'static str, ProviderFactory>,
+    simplefin_url: Option<obol_core::Secret<String>>,
 ) -> Result<RefreshResult, String> {
     // §9.1: a malformed sources.yaml blocks the run outright rather than
     // falling back to an empty source list.
@@ -123,11 +135,12 @@ pub async fn refresh_dashboard(
         .into_iter()
         .next();
 
-    let result = obol_core::run_and_save(
+    let result = obol_core::run_and_save_with_simplefin_url(
         &sources,
         registry,
         &NoInteractiveProviders,
         &layout.snapshots,
+        simplefin_url,
     )
     .await;
 
@@ -138,6 +151,8 @@ pub async fn refresh_dashboard(
             // Shown on its own as a banner, so phrased as a full sentence.
             .map(|err| format!("This refresh was not saved to history: {err}")),
         added_sources: Vec::new(),
+        transactions_added: 0,
+        sync_warning: None,
     })
 }
 
@@ -290,6 +305,7 @@ mod tests {
                 rules: "/root/rules.yaml".into(),
                 simplefin_usage: "/root/simplefin_usage.json".into(),
                 simplefin_ignored: "/root/simplefin_ignored.json".into(),
+                simplefin_sync: "/root/simplefin_sync.json".into(),
                 transactions: "/root/transactions".into(),
                 merchant_rules: "/root/merchant_rules.yaml".into(),
                 plan: "/root/plan.yaml".into(),
@@ -369,7 +385,7 @@ mod tests {
         let layout = StorageLayout::under(&temp_root("refresh-render"));
         write_fixed_source(&layout);
 
-        let result = refresh_dashboard(&layout, &fixed_balance_registry(500.0))
+        let result = refresh_dashboard(&layout, &fixed_balance_registry(500.0), None)
             .await
             .unwrap();
 
@@ -384,7 +400,7 @@ mod tests {
         let layout = StorageLayout::under(&temp_root("refresh-save"));
         write_fixed_source(&layout);
 
-        refresh_dashboard(&layout, &fixed_balance_registry(500.0))
+        refresh_dashboard(&layout, &fixed_balance_registry(500.0), None)
             .await
             .unwrap();
 
@@ -410,7 +426,7 @@ mod tests {
             Duration::from_secs(7200),
         );
 
-        let result = refresh_dashboard(&layout, &fixed_balance_registry(500.0))
+        let result = refresh_dashboard(&layout, &fixed_balance_registry(500.0), None)
             .await
             .unwrap();
 
@@ -428,7 +444,7 @@ mod tests {
         write_fixed_source(&layout);
         fs::write(&layout.snapshots, "not a directory").unwrap();
 
-        let result = refresh_dashboard(&layout, &fixed_balance_registry(500.0))
+        let result = refresh_dashboard(&layout, &fixed_balance_registry(500.0), None)
             .await
             .unwrap();
 
@@ -440,7 +456,7 @@ mod tests {
         let layout = StorageLayout::under(&temp_root("refresh-save-ok"));
         write_fixed_source(&layout);
 
-        let result = refresh_dashboard(&layout, &fixed_balance_registry(500.0))
+        let result = refresh_dashboard(&layout, &fixed_balance_registry(500.0), None)
             .await
             .unwrap();
 
@@ -453,7 +469,7 @@ mod tests {
         // CLI routes that case away from fetching; refresh must too.
         let layout = StorageLayout::under(&temp_root("refresh-no-sources"));
 
-        let result = refresh_dashboard(&layout, &fixed_balance_registry(500.0)).await;
+        let result = refresh_dashboard(&layout, &fixed_balance_registry(500.0), None).await;
 
         assert!(result.is_err());
     }
@@ -465,7 +481,7 @@ mod tests {
         // snapshot behind it.
         let layout = StorageLayout::under(&temp_root("refresh-no-sources-save"));
 
-        let _ = refresh_dashboard(&layout, &fixed_balance_registry(500.0)).await;
+        let _ = refresh_dashboard(&layout, &fixed_balance_registry(500.0), None).await;
 
         assert_eq!(
             obol_core::load_recent_snapshots(&layout.snapshots, 10)
@@ -482,7 +498,7 @@ mod tests {
         let layout = StorageLayout::under(&temp_root("refresh-bad-yaml"));
         fs::write(&layout.sources, "sources: [ this is: not valid").unwrap();
 
-        let result = refresh_dashboard(&layout, &fixed_balance_registry(500.0)).await;
+        let result = refresh_dashboard(&layout, &fixed_balance_registry(500.0), None).await;
 
         assert!(result.is_err());
     }

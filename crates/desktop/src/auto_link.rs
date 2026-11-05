@@ -1,36 +1,12 @@
 //! New SimpleFIN accounts join on Refresh: open a new card at a bank
 //! that's already connected, and it shows up on the next Refresh with
-//! obol's guesses, no relinking.
-//!
-//! **Contract.** Signatures are final; bodies are agent C's.
-
-use std::sync::Arc;
+//! obol's guesses, no relinking. Refresh's own request supplies the
+//! accounts (`sync.rs`).
 
 use obol_core::{add_source, linkable_accounts, load_or_init, new_source, AccountSet};
 
 use crate::dashboard::StorageLayout;
-use crate::simplefin::{self, SimpleFin};
-
-/// The accounts a Refresh is about to see, fetched through the shared
-/// provider so the run right after reuses the same request. `None` when no
-/// source uses SimpleFIN yet (connecting is the form's job), when there's
-/// no Access URL, or when the fetch fails, since the run then reports the
-/// failure per source anyway.
-pub async fn fetch_for_auto_link(
-    layout: &StorageLayout,
-    simplefin: &SimpleFin,
-) -> Option<Arc<AccountSet>> {
-    // `load_or_init` would create the file; that's first run's job.
-    if !layout.sources.exists() {
-        return None;
-    }
-    let sources = load_or_init(&layout.sources).ok()?;
-    if !sources.iter().any(|s| s.provider == "simplefin") {
-        return None;
-    }
-    let access_url = obol_core::simplefin_access_url()?;
-    simplefin.0.account_set(&access_url).await.ok()
-}
+use crate::simplefin;
 
 /// Links every account in `set` that's neither linked nor ignored, with
 /// obol's guess (`simplefin::guess`), and returns one label per account
@@ -93,6 +69,7 @@ mod tests {
                     name: name.to_string(),
                     conn_id: "c1".into(),
                     balance: balance.to_string(),
+                    transactions: vec![],
                 })
                 .collect(),
         }
@@ -283,57 +260,5 @@ mod tests {
 
         fs::set_permissions(&root, fs::Permissions::from_mode(0o755)).unwrap();
         assert!(added.unwrap_err().contains("Chase Bank Savings"));
-    }
-
-    // These all return before the Keychain or the network. The usage log
-    // is written before any request, so its absence proves none was sent.
-
-    #[tokio::test]
-    async fn should_fetch_nothing_without_a_sources_file() {
-        let layout = temp_layout("fetch-missing");
-        let simplefin = SimpleFin::new(layout.simplefin_usage.clone());
-
-        assert!(fetch_for_auto_link(&layout, &simplefin).await.is_none());
-    }
-
-    #[tokio::test]
-    async fn should_not_create_a_sources_file_when_fetching() {
-        let layout = temp_layout("fetch-no-create");
-        let simplefin = SimpleFin::new(layout.simplefin_usage.clone());
-
-        fetch_for_auto_link(&layout, &simplefin).await;
-
-        assert!(!layout.sources.exists());
-    }
-
-    #[tokio::test]
-    async fn should_fetch_nothing_when_no_source_uses_simplefin() {
-        let layout = temp_layout("fetch-no-simplefin");
-        add_source(&layout.sources, source("plaid_checking", "plaid", "ACT-1")).unwrap();
-        let simplefin = SimpleFin::new(layout.simplefin_usage.clone());
-
-        assert!(fetch_for_auto_link(&layout, &simplefin).await.is_none());
-    }
-
-    #[tokio::test]
-    async fn should_send_no_request_when_no_source_uses_simplefin() {
-        let layout = temp_layout("fetch-no-request");
-        add_source(&layout.sources, source("plaid_checking", "plaid", "ACT-1")).unwrap();
-        let simplefin = SimpleFin::new(layout.simplefin_usage.clone());
-
-        fetch_for_auto_link(&layout, &simplefin).await;
-
-        assert!(!layout.simplefin_usage.exists());
-    }
-
-    #[tokio::test]
-    async fn should_send_no_request_when_sources_file_is_malformed() {
-        let layout = temp_layout("fetch-malformed");
-        fs::write(&layout.sources, "sources: [not: [valid").unwrap();
-        let simplefin = SimpleFin::new(layout.simplefin_usage.clone());
-
-        fetch_for_auto_link(&layout, &simplefin).await;
-
-        assert!(!layout.simplefin_usage.exists());
     }
 }

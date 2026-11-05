@@ -192,20 +192,25 @@ async fn fetch_accounts(
                      failed ({e}). Create a new Setup Token and try again."
                 )
             })?;
+            simplefin.remember(url.clone()).await;
             url
         }
-        None => saved_access_url(obol_core::simplefin_access_url())?,
+        None => saved_access_url(simplefin.access_url().await)?,
     };
-    simplefin.0.account_set(&access_url).await.map_err(|e| {
-        if claimed {
-            format!(
-                "SimpleFIN is connected, but your accounts couldn't be fetched: {e}. \
+    simplefin
+        .provider
+        .account_set(&access_url)
+        .await
+        .map_err(|e| {
+            if claimed {
+                format!(
+                    "SimpleFIN is connected, but your accounts couldn't be fetched: {e}. \
                      Try again with your saved connection."
-            )
-        } else {
-            format!("Your accounts couldn't be fetched from SimpleFIN: {e}.")
-        }
-    })
+                )
+            } else {
+                format!("Your accounts couldn't be fetched from SimpleFIN: {e}.")
+            }
+        })
 }
 
 /// A blank paste means "reuse the saved connection".
@@ -290,6 +295,7 @@ mod tests {
                     name: name.to_string(),
                     conn_id: "c1".into(),
                     balance: balance.to_string(),
+                    transactions: vec![],
                 })
                 .collect(),
         }
