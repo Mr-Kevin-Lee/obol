@@ -164,14 +164,15 @@ async fn set_merchant_category(
     budget::transactions_view(&layout, month)
 }
 
-/// Additive: re-importing adds only new rows and keeps every existing rule.
+/// Learns categories from a Simplifi export's text, which the webview reads
+/// from the file the user picked. Additive: every existing rule is kept.
 #[tauri::command]
 async fn import_simplifi(
     lock: tauri::State<'_, WriteLock>,
-    path: String,
+    contents: String,
 ) -> Result<ImportResult, String> {
     let layout = storage_layout()?;
-    locked(&lock, || budget::import_simplifi(&layout, &path))
+    locked(&lock, || budget::import_simplifi(&layout, &contents))
 }
 
 #[tauri::command]

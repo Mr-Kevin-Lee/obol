@@ -62,26 +62,29 @@
     }
   }
 
-  let importPath = $state('')
+  let fileInput = $state<HTMLInputElement | null>(null)
   let importing = $state(false)
   let imported = $state<string | null>(null)
 
   // Categories only, and additive: a merchant you've already categorized
-  // here keeps its category.
-  async function importSimplifi(event: SubmitEvent) {
-    event.preventDefault()
+  // here keeps its category. The picker hands over the file itself, so the
+  // app needs no path and no access to the folder it's in.
+  async function importSimplifi() {
+    const file = fileInput?.files?.[0]
+    if (!file) return
     importing = true
     error = null
     imported = null
     try {
-      const result = await invoke<ImportResult>('import_simplifi', { path: importPath })
-      imported = `Learned ${result.rules_added} merchant categories from Simplifi.`
-      importPath = ''
+      const result = await invoke<ImportResult>('import_simplifi', { contents: await file.text() })
+      imported = `Learned ${result.rules_added} merchant categories from ${file.name}.`
       await load(month)
     } catch (e) {
-      error = `Couldn't read the Simplifi export: ${e}`
+      error = `Couldn't read ${file.name}: ${e}`
     } finally {
       importing = false
+      // So choosing the same file again still fires a change.
+      if (fileInput) fileInput.value = ''
     }
   }
 
@@ -220,21 +223,18 @@
 {#if !loading && insideApp()}
   <section class="card" aria-labelledby="import-heading">
     <h2 id="import-heading">Learn categories from Simplifi</h2>
-    <form class="import" onsubmit={importSimplifi}>
-      <label>
-        Export file
-        <input
-          type="text"
-          placeholder="Full path to the exported .csv file"
-          spellcheck="false"
-          autocomplete="off"
-          bind:value={importPath}
-        />
-      </label>
-      <button type="submit" disabled={importing || importPath.trim() === ''}>
-        {importing ? 'Learning…' : 'Learn categories'}
+    <div class="import">
+      <button type="button" disabled={importing} onclick={() => fileInput?.click()}>
+        {importing ? 'Learning…' : 'Choose Simplifi export…'}
       </button>
-    </form>
+      <input
+        bind:this={fileInput}
+        type="file"
+        accept=".csv,text/csv"
+        hidden
+        onchange={importSimplifi}
+      />
+    </div>
     <p class="hint">
       Reads only how you categorized each merchant in Simplifi; your transactions come from
       SimpleFIN. Categories you've already set here are kept.
@@ -269,27 +269,6 @@
     margin: 0.5rem 0 0;
     font-size: 0.8125rem;
     color: var(--positive);
-  }
-
-  .import {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    gap: 0.5rem;
-  }
-
-  .import label {
-    display: flex;
-    flex: 1;
-    align-items: center;
-    gap: 0.5rem;
-    font-size: 0.8125rem;
-    color: var(--text-muted);
-  }
-
-  .import input {
-    flex: 1;
-    min-width: 16rem;
   }
 
   .import button {
