@@ -6,8 +6,6 @@
 //! error message.
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::fs;
-use std::io;
 use std::path::Path;
 
 use thiserror::Error;
@@ -18,8 +16,6 @@ use crate::merchant_rules_storage::{seed_merchant_rules, MerchantRulesError};
 
 #[derive(Debug, Error)]
 pub enum SimplifiImportError {
-    #[error("the export could not be read: {0}")]
-    Io(#[from] io::Error),
     #[error("not a Simplifi transactions export: it has no {0:?} column")]
     MissingColumn(&'static str),
     #[error("the export ends inside a quoted field")]
@@ -88,16 +84,19 @@ pub fn parse_simplifi_rules(text: &str) -> Result<BTreeMap<String, String>, Simp
         .collect())
 }
 
-/// Learns the export's categories. Additive: a merchant that already has a
-/// rule — an earlier import or an edit in the app — keeps it. A malformed
-/// row fails the whole import before anything is written. Returns how many
-/// rules were added.
+/// Learns the categories in `export`, the file's text: the app reads the
+/// file the user picks, so this never opens one itself. Additive: a merchant
+/// that already has a rule — an earlier import or an edit in the app —
+/// keeps it. A malformed row fails the whole import before anything is
+/// written. Returns how many rules were added.
 pub fn import_simplifi_rules(
-    export: &Path,
+    export: &str,
     merchant_rules: &Path,
 ) -> Result<usize, SimplifiImportError> {
-    let rules = parse_simplifi_rules(&fs::read_to_string(export)?)?;
-    Ok(seed_merchant_rules(merchant_rules, &rules)?)
+    Ok(seed_merchant_rules(
+        merchant_rules,
+        &parse_simplifi_rules(export)?,
+    )?)
 }
 
 /// RFC 4180 records: quoted fields may hold commas, newlines and doubled
@@ -165,6 +164,7 @@ fn collapse_spaces(text: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
     use std::path::PathBuf;
 
     const HEADER: &str = "Date,Account,Reviewed,Payee,Category,Exclusion,Amount";
@@ -493,13 +493,7 @@ mod tests {
         assert!(!result.unwrap_err().to_string().contains("Jane"));
     }
 
-    // --- Importing to disk ---
-
-    fn write_export(dir: &Path, rows: &[&str]) -> PathBuf {
-        let path = dir.join("export.csv");
-        fs::write(&path, export(rows)).unwrap();
-        path
-    }
+    // --- Saving what was learned ---
 
     const CAFE: &str = "\"Oct 27, 2026\",Card,no,Corner Cafe,Dining & Drinks,no, -4.00";
     const GROCER: &str = "\"Sep 3, 2026\",Card,no,Green Grocer,Groceries,no, -60.00";
@@ -507,9 +501,9 @@ mod tests {
     #[test]
     fn should_report_how_many_rules_were_learned() {
         let dir = temp_dir("rules-added");
-        let csv = write_export(&dir, &[CAFE, GROCER]);
 
-        let added = import_simplifi_rules(&csv, &dir.join("rules.yaml")).unwrap();
+        let added =
+            import_simplifi_rules(&export(&[CAFE, GROCER]), &dir.join("rules.yaml")).unwrap();
 
         assert_eq!(added, 2);
     }
@@ -517,21 +511,22 @@ mod tests {
     #[test]
     fn should_learn_nothing_new_from_the_same_export_twice() {
         let dir = temp_dir("reimport");
-        let csv = write_export(&dir, &[CAFE, GROCER]);
         let rules = dir.join("rules.yaml");
-        import_simplifi_rules(&csv, &rules).unwrap();
+        import_simplifi_rules(&export(&[CAFE, GROCER]), &rules).unwrap();
 
-        assert_eq!(import_simplifi_rules(&csv, &rules).unwrap(), 0);
+        assert_eq!(
+            import_simplifi_rules(&export(&[CAFE, GROCER]), &rules).unwrap(),
+            0
+        );
     }
 
     #[test]
     fn should_keep_an_existing_rule_over_a_learned_one() {
         let dir = temp_dir("keep-rule");
-        let csv = write_export(&dir, &[CAFE]);
         let rules = dir.join("rules.yaml");
         crate::set_merchant_category(&rules, &merchant_key("Corner Cafe"), "Groceries").unwrap();
 
-        import_simplifi_rules(&csv, &rules).unwrap();
+        import_simplifi_rules(&export(&[CAFE]), &rules).unwrap();
 
         assert_eq!(
             crate::load_or_init_merchant_rules(&rules).unwrap().rules[&merchant_key("Corner Cafe")],
@@ -542,20 +537,10 @@ mod tests {
     #[test]
     fn should_write_nothing_when_a_row_is_bad() {
         let dir = temp_dir("all-or-nothing");
-        let csv = write_export(&dir, &[CAFE, "\"Oct 27, 2026\",Card,no"]);
         let rules = dir.join("rules.yaml");
 
-        let _ = import_simplifi_rules(&csv, &rules);
+        let _ = import_simplifi_rules(&export(&[CAFE, "\"Oct 27, 2026\",Card,no"]), &rules);
 
         assert!(!rules.exists());
-    }
-
-    #[test]
-    fn should_fail_when_the_export_is_missing() {
-        let dir = temp_dir("missing");
-
-        let result = import_simplifi_rules(&dir.join("nope.csv"), &dir.join("rules.yaml"));
-
-        assert!(matches!(result, Err(SimplifiImportError::Io(_))));
     }
 }

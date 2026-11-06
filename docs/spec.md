@@ -1095,8 +1095,9 @@ imported `Parent:Child` category maps to its parent. No LLM or network call
 is ever made in this path (#35).
 
 **The Simplifi import** learns categories, and only categories, from
-Simplifi's transactions export, picked by a path field on the Transactions
-screen. SimpleFIN supplies every transaction, so importing Simplifi's too
+Simplifi's transactions export, chosen with the native file picker on the
+Transactions screen (the webview reads the chosen file and hands its text
+over, so the app never needs a path or folder access). SimpleFIN supplies every transaction, so importing Simplifi's too
 would count each purchase twice. It reads the `Account`, `Payee`,
 `Category` and `Exclusion` columns, and is **additive**: it seeds a rule
 only for a merchant that has none, so earlier imports and edits in the app

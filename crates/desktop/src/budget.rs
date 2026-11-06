@@ -9,7 +9,6 @@
 //! plan figure, `spent`, `target` and series amount is a magnitude.
 
 use std::collections::{BTreeMap, HashMap};
-use std::path::Path;
 
 use obol_core::{
     available_categories, categorize, compute_month_plan, display_name, format_iso_date,
@@ -338,12 +337,12 @@ pub struct ImportResult {
     pub rules_added: usize,
 }
 
-/// Learns categories from a Simplifi export at `path`; transactions come
-/// from SimpleFIN, never from the export.
-pub fn import_simplifi(layout: &StorageLayout, path: &str) -> Result<ImportResult, String> {
-    let path = non_empty(path, "path")?;
-    let rules_added = import_simplifi_rules(Path::new(path), &layout.merchant_rules)
-        .map_err(|err| err.to_string())?;
+/// Learns categories from a Simplifi export's text, read by the webview
+/// from the file the user picked; transactions come from SimpleFIN, never
+/// from the export.
+pub fn import_simplifi(layout: &StorageLayout, export: &str) -> Result<ImportResult, String> {
+    let rules_added =
+        import_simplifi_rules(export, &layout.merchant_rules).map_err(|err| err.to_string())?;
     Ok(ImportResult { rules_added })
 }
 
@@ -1423,24 +1422,15 @@ mod tests {
         );
     }
 
-    fn write_export(layout: &StorageLayout) -> String {
-        let path = layout.transactions.with_file_name("export.csv");
-        fs::write(
-            &path,
-            "Date,Account,Reviewed,Payee,Category,Exclusion,Amount\n\
-             \"Oct 20, 2026\",Card,no,Corner Cafe,Dining & Drinks,no, -4.00\n\
-             \"Oct 21, 2026\",Card,no,Green Grocer,Groceries,no, -60.00\n",
-        )
-        .unwrap();
-        path.to_string_lossy().into_owned()
-    }
+    const EXPORT: &str = "Date,Account,Reviewed,Payee,Category,Exclusion,Amount\n\
+         \"Oct 20, 2026\",Card,no,Corner Cafe,Dining & Drinks,no, -4.00\n\
+         \"Oct 21, 2026\",Card,no,Green Grocer,Groceries,no, -60.00\n";
 
     #[test]
     fn should_learn_categories_without_adding_transactions() {
         let layout = temp_layout("import-no-transactions");
-        let path = write_export(&layout);
 
-        import_simplifi(&layout, &path).unwrap();
+        import_simplifi(&layout, EXPORT).unwrap();
 
         assert!(transactions_view(&layout, october())
             .unwrap()
@@ -1461,9 +1451,8 @@ mod tests {
                 "GREEN GROCER PASADENA",
             )],
         );
-        let path = write_export(&layout);
 
-        import_simplifi(&layout, &path).unwrap();
+        import_simplifi(&layout, EXPORT).unwrap();
 
         assert_eq!(
             transactions_view(&layout, october()).unwrap().transactions[0].category,
@@ -1474,37 +1463,18 @@ mod tests {
     #[test]
     fn should_report_how_many_categories_the_import_learned() {
         let layout = temp_layout("import-counts");
-        let path = write_export(&layout);
 
-        let result = import_simplifi(&layout, &path).unwrap();
+        let result = import_simplifi(&layout, EXPORT).unwrap();
 
         assert_eq!(result, ImportResult { rules_added: 2 });
     }
 
     #[test]
-    fn should_trim_whitespace_around_the_import_path() {
-        let layout = temp_layout("import-trim");
-        let path = write_export(&layout);
+    fn should_say_when_a_file_is_not_a_simplifi_export() {
+        let layout = temp_layout("import-not-simplifi");
 
-        assert!(import_simplifi(&layout, &format!("  {path}\n")).is_ok());
-    }
+        let err = import_simplifi(&layout, "name,amount\nCafe,-4.00\n").unwrap_err();
 
-    #[test]
-    fn should_reject_an_empty_import_path() {
-        let layout = temp_layout("import-empty");
-
-        assert_eq!(
-            import_simplifi(&layout, "  ").unwrap_err(),
-            "a path can't be empty"
-        );
-    }
-
-    #[test]
-    fn should_report_a_missing_export_file() {
-        let layout = temp_layout("import-missing");
-
-        let err = import_simplifi(&layout, "/nonexistent/export.csv").unwrap_err();
-
-        assert!(err.contains("could not be read"));
+        assert!(err.contains("not a Simplifi transactions export"));
     }
 }
