@@ -13,7 +13,7 @@ use std::path::Path;
 
 use obol_core::{
     available_categories, categorize, compute_month_plan, display_name, format_iso_date,
-    import_simplifi_export, load_or_init_merchant_rules, load_or_init_plan, load_recent_snapshots,
+    import_simplifi_rules, load_or_init_merchant_rules, load_or_init_plan, load_recent_snapshots,
     load_sync_state, load_transactions_range, merchant_key, save_plan, set_merchant_category,
     suggest_series, CategorizedTransaction, Date, MerchantRules, PaymentStatus, PlanConfig,
     RecurringSeries, SeriesKind, YearMonth, INCOME, TRANSFER, UNCATEGORIZED,
@@ -44,7 +44,7 @@ pub struct TransactionRow {
     pub merchant_key: String,
     pub merchant_name: String,
     /// The source's institution and account type, from the latest snapshot;
-    /// "<account> (Simplifi)" for an imported one, else the bare `source_id`.
+    /// the bare `source_id` if no snapshot names it.
     pub account_label: String,
     /// Signed: negative is money out.
     pub amount: f64,
@@ -331,27 +331,20 @@ pub fn dismiss_series(layout: &StorageLayout, merchant_key: &str) -> Result<(), 
     })
 }
 
-/// What a Simplifi import added. Imports are additive, so nothing else
+/// What a Simplifi import learned. Imports are additive, so nothing else
 /// can have changed.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize)]
 pub struct ImportResult {
-    pub added: usize,
     pub rules_added: usize,
 }
 
-/// The Simplifi import (task 121): `path` is the export CSV.
+/// Learns categories from a Simplifi export at `path`; transactions come
+/// from SimpleFIN, never from the export.
 pub fn import_simplifi(layout: &StorageLayout, path: &str) -> Result<ImportResult, String> {
     let path = non_empty(path, "path")?;
-    let summary = import_simplifi_export(
-        Path::new(path),
-        &layout.transactions,
-        &layout.merchant_rules,
-    )
-    .map_err(|err| err.to_string())?;
-    Ok(ImportResult {
-        added: summary.transactions.added,
-        rules_added: summary.rules_added,
-    })
+    let rules_added = import_simplifi_rules(Path::new(path), &layout.merchant_rules)
+        .map_err(|err| err.to_string())?;
+    Ok(ImportResult { rules_added })
 }
 
 /// Removes a confirmed series and dismisses it, so the same history doesn't
@@ -509,13 +502,10 @@ fn transaction_row(
         posted: format_iso_date(transaction.transaction.posted),
         merchant_key: transaction.merchant_key.clone(),
         merchant_name: display_name(&transaction.merchant_key),
-        account_label: labels.get(source_id).cloned().unwrap_or_else(|| {
-            // Imported accounts have no snapshot to name them.
-            match source_id.strip_prefix("simplifi:") {
-                Some(account) => format!("{account} (Simplifi)"),
-                None => source_id.clone(),
-            }
-        }),
+        account_label: labels
+            .get(source_id)
+            .cloned()
+            .unwrap_or_else(|| source_id.clone()),
         amount: transaction.transaction.amount,
         category: transaction.category.clone(),
     }
@@ -1446,24 +1436,31 @@ mod tests {
     }
 
     #[test]
-    fn should_show_imported_transactions_in_their_month() {
-        let layout = temp_layout("import-view");
+    fn should_learn_categories_without_adding_transactions() {
+        let layout = temp_layout("import-no-transactions");
         let path = write_export(&layout);
 
         import_simplifi(&layout, &path).unwrap();
 
-        assert_eq!(
-            transactions_view(&layout, october())
-                .unwrap()
-                .transactions
-                .len(),
-            2
-        );
+        assert!(transactions_view(&layout, october())
+            .unwrap()
+            .transactions
+            .is_empty());
     }
 
     #[test]
-    fn should_categorize_imported_transactions_by_the_seeded_rules() {
+    fn should_categorize_simplefin_transactions_by_learned_categories() {
         let layout = temp_layout("import-rules");
+        write_transactions(
+            &layout,
+            vec![tx(
+                "chk",
+                "t1",
+                "2026-10-21",
+                -60.0,
+                "GREEN GROCER PASADENA",
+            )],
+        );
         let path = write_export(&layout);
 
         import_simplifi(&layout, &path).unwrap();
@@ -1475,30 +1472,13 @@ mod tests {
     }
 
     #[test]
-    fn should_report_what_the_import_added() {
+    fn should_report_how_many_categories_the_import_learned() {
         let layout = temp_layout("import-counts");
         let path = write_export(&layout);
 
         let result = import_simplifi(&layout, &path).unwrap();
 
-        assert_eq!(
-            result,
-            ImportResult {
-                added: 2,
-                rules_added: 2
-            }
-        );
-    }
-
-    #[test]
-    fn should_label_an_imported_account_by_its_simplifi_name() {
-        let layout = temp_layout("import-label");
-        let path = write_export(&layout);
-        import_simplifi(&layout, &path).unwrap();
-
-        let view = transactions_view(&layout, october()).unwrap();
-
-        assert_eq!(view.transactions[0].account_label, "Card (Simplifi)");
+        assert_eq!(result, ImportResult { rules_added: 2 });
     }
 
     #[test]

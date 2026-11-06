@@ -1075,12 +1075,15 @@ pub struct Transaction {
 **Categorization** is computed when transactions are read, never stored on
 them, so editing a rule re-categorizes the past as well as the future. Each
 transaction gets a **merchant key** (its description uppercased, with
-payment-processor prefixes, store numbers, card digits, phone numbers, URLs
-and trailing city/state/zip stripped, then aliased: `AMZN` → `AMAZON`), and
-then a category, first match wins:
+payment-processor and wallet prefixes such as `SQ *` and `APLPAY`, store
+numbers, a street number glued to the name (`ST380` → `ST`), card digits,
+phone numbers, URLs and trailing city/state/zip stripped, then aliased:
+`AMZN` → `AMAZON`), and then a category, first match wins:
 
-1. A rule in `merchant_rules.yaml` — written by an edit in the app, or seeded
-   by the one-time Simplifi import.
+1. A rule in `merchant_rules.yaml` — written by an edit in the app, or
+   learned from a Simplifi export. The longest rule whose words lead the key
+   wins, so the rule `TRADER JOES` also covers `TRADER JOES PASADENA`, where
+   a bank appended a city the rule's name lacked.
 2. Transfer pairing: an equal and opposite amount on a different source
    within 5 days, each transaction paired at most once. Tagged `Transfer`.
 3. Built-in defaults: common merchants, plus transfer keywords such as
@@ -1091,24 +1094,22 @@ Categories are flat strings seeded from Simplifi's top-level list; an
 imported `Parent:Child` category maps to its parent. No LLM or network call
 is ever made in this path (#35).
 
-**The Simplifi import** reads Simplifi's transactions export (`Date,
-Account, Reviewed, Payee, Category, Exclusion, Amount`; dates as `Oct 27,
-2026`), picked by a path field on the Transactions screen. It is
-**additive**: importing the same or a later export adds only rows not yet
-stored and never changes or removes one, and it seeds a rule only for a
-merchant that has none, so earlier seeds and edits in the app always stay.
+**The Simplifi import** learns categories, and only categories, from
+Simplifi's transactions export, picked by a path field on the Transactions
+screen. SimpleFIN supplies every transaction, so importing Simplifi's too
+would count each purchase twice. It reads the `Account`, `Payee`,
+`Category` and `Exclusion` columns, and is **additive**: it seeds a rule
+only for a merchant that has none, so earlier imports and edits in the app
+always stay.
 
-- Each account becomes the source `simplifi:<account>`. Simplifi exports no
-  ids, so a row's id is its date, amount and payee, numbered when identical
-  rows repeat on one account.
 - A merchant's seeded rule is the category Simplifi used most for it, ties
   going to the alphabetically first. Uncategorized rows don't vote.
 - Excluded rows, `Transfer`, `Credit Card Payment`, `Balance Adjustment`
   and a category naming one of the export's accounts all map to `Transfer`.
   `Utilities`, `Personal Income` and `Fees & Charges` map to `Bills &
   Utilities`, `Income` and `Fees`; any other category is kept as is.
-- One bad row fails the whole import before anything is written, and the
-  error names the row number, never its payee or amount.
+- One malformed row fails the whole import before anything is written, and
+  the error names the row number, never its payee.
 
 ## 12. Net worth & breakdown logic
 
@@ -1629,8 +1630,8 @@ is verified separately, not forced into that same red-green loop (§5).
   transactions (§11.4) and a monthly spending plan (§13.6) in the desktop
   app. Built first against fixture transactions, in parallel with the
   SimpleFIN migration (#37); real data arrives with SimpleFIN's transaction
-  feed (#38), and history before SimpleFIN's ~90-day window comes from a
-  one-time Simplifi CSV import that also seeds the merchant rules.
+  feed (#38), and a Simplifi export seeds the merchant rules (categories
+  only; SimpleFIN is the only source of transactions).
 
 ## 17. Decisions log
 

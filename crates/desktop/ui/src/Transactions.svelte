@@ -66,7 +66,8 @@
   let importing = $state(false)
   let imported = $state<string | null>(null)
 
-  // Additive, so importing a newer export later only adds what's new.
+  // Categories only, and additive: a merchant you've already categorized
+  // here keeps its category.
   async function importSimplifi(event: SubmitEvent) {
     event.preventDefault()
     importing = true
@@ -74,11 +75,11 @@
     imported = null
     try {
       const result = await invoke<ImportResult>('import_simplifi', { path: importPath })
-      imported = `Imported ${result.added} new transactions and ${result.rules_added} new merchant rules.`
+      imported = `Learned ${result.rules_added} merchant categories from Simplifi.`
       importPath = ''
       await load(month)
     } catch (e) {
-      error = `Couldn't import the Simplifi export: ${e}`
+      error = `Couldn't read the Simplifi export: ${e}`
     } finally {
       importing = false
     }
@@ -218,7 +219,7 @@
 
 {#if !loading && insideApp()}
   <section class="card" aria-labelledby="import-heading">
-    <h2 id="import-heading">Import from Simplifi</h2>
+    <h2 id="import-heading">Learn categories from Simplifi</h2>
     <form class="import" onsubmit={importSimplifi}>
       <label>
         Export file
@@ -231,10 +232,13 @@
         />
       </label>
       <button type="submit" disabled={importing || importPath.trim() === ''}>
-        {importing ? 'Importing…' : 'Import'}
+        {importing ? 'Learning…' : 'Learn categories'}
       </button>
     </form>
-    <p class="hint">Adds only transactions not already here, and keeps every category you've set.</p>
+    <p class="hint">
+      Reads only how you categorized each merchant in Simplifi; your transactions come from
+      SimpleFIN. Categories you've already set here are kept.
+    </p>
     {#if imported}
       <p class="imported" role="status">{imported}</p>
     {/if}
