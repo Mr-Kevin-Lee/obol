@@ -149,6 +149,10 @@ export interface TransactionsView {
   spent_total: number
   /** Already sorted, most spent first. */
   categories: CategoryBar[]
+  /** spent_total without payments to confirmed bills. */
+  discretionary_spent_total: number
+  /** categories without payments to confirmed bills. */
+  discretionary_categories: CategoryBar[]
   /** Already sorted, newest first. */
   transactions: TransactionRow[]
   uncategorized_count: number

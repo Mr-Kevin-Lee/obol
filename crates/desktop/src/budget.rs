@@ -62,6 +62,10 @@ pub struct TransactionsView {
     pub spent_total: f64,
     /// Spending categories, most spent first.
     pub categories: Vec<CategoryBar>,
+    /// `spent_total` without payments to confirmed bills.
+    pub discretionary_spent_total: f64,
+    /// `categories` without payments to confirmed bills.
+    pub discretionary_categories: Vec<CategoryBar>,
     /// Newest first.
     pub transactions: Vec<TransactionRow>,
     pub uncategorized_count: usize,
@@ -149,13 +153,20 @@ pub fn transactions_view(
     let labels = account_labels(layout);
     let plan = read_plan(layout)?;
 
-    let spend = spend_by_category(in_month.iter().copied());
-    let spent_total = spend.values().fold(0.0, |total, spent| total + spent);
+    let (spent_total, categories) = spending(in_month.iter().copied());
+    let (discretionary_spent_total, discretionary_categories) = spending(
+        in_month
+            .iter()
+            .copied()
+            .filter(|transaction| !is_bill_payment(&plan, transaction)),
+    );
 
     Ok(TransactionsView {
         month: month.to_string(),
         spent_total,
-        categories: category_bars(spend),
+        categories,
+        discretionary_spent_total,
+        discretionary_categories,
         transactions: in_month
             .iter()
             .map(|transaction| transaction_row(transaction, &labels, &plan))
@@ -473,6 +484,15 @@ fn spend_by_category<'a>(
         *spend.entry(transaction.category.clone()).or_insert(0.0) -= transaction.transaction.amount;
     }
     spend
+}
+
+/// Net spending and its category bars.
+fn spending<'a>(
+    transactions: impl Iterator<Item = &'a CategorizedTransaction>,
+) -> (f64, Vec<CategoryBar>) {
+    let spend = spend_by_category(transactions);
+    let total = spend.values().fold(0.0, |total, spent| total + spent);
+    (total, category_bars(spend))
 }
 
 /// Bars for every category with positive spending, most first, ties by
@@ -1422,6 +1442,77 @@ mod tests {
         confirm_series(&layout, series("COMCAST", SeriesKind::Bill, 82.5, 12)).unwrap();
 
         assert!(!transactions_view(&layout, october()).unwrap().transactions[0].bill);
+    }
+
+    /// A confirmed Netflix bill alongside $50 of other shopping.
+    fn bill_and_shopping(name: &str) -> StorageLayout {
+        let layout = temp_layout(name);
+        write_rules(
+            &layout,
+            &[("NETFLIX", "Entertainment"), ("AMAZON", "Shopping")],
+        );
+        write_transactions(
+            &layout,
+            vec![
+                tx("card", "n", "2026-10-20", -15.5, "NETFLIX"),
+                tx("card", "a", "2026-10-21", -50.0, "AMAZON"),
+            ],
+        );
+        confirm_series(&layout, series("NETFLIX", SeriesKind::Bill, 15.5, 20)).unwrap();
+        layout
+    }
+
+    #[test]
+    fn should_leave_bill_payments_out_of_the_discretionary_total() {
+        let layout = bill_and_shopping("disc-total");
+
+        let view = transactions_view(&layout, october()).unwrap();
+
+        assert_eq!(view.discretionary_spent_total, 50.0);
+    }
+
+    #[test]
+    fn should_leave_bill_payments_out_of_the_discretionary_bars() {
+        let layout = bill_and_shopping("disc-bars");
+
+        let view = transactions_view(&layout, october()).unwrap();
+
+        assert_eq!(
+            view.discretionary_categories,
+            [CategoryBar {
+                category: "Shopping".into(),
+                spent: 50.0,
+                percentage: 100.0
+            }]
+        );
+    }
+
+    #[test]
+    fn should_leave_transfers_and_income_out_of_the_discretionary_total() {
+        let layout = temp_layout("disc-excludes");
+        write_rules(
+            &layout,
+            &[("ACME PAYROLL", "Income"), ("AMAZON", "Shopping")],
+        );
+        write_transactions(
+            &layout,
+            vec![
+                tx("checking", "pay", "2026-10-01", 4500.0, "ACME PAYROLL"),
+                tx(
+                    "checking",
+                    "out",
+                    "2026-10-05",
+                    -100.0,
+                    "CHASE CARD AUTOPAY",
+                ),
+                tx("card", "in", "2026-10-06", 100.0, "PAYMENT RECEIVED"),
+                tx("card", "buy", "2026-10-07", -50.0, "AMAZON"),
+            ],
+        );
+
+        let view = transactions_view(&layout, october()).unwrap();
+
+        assert_eq!(view.discretionary_spent_total, 50.0);
     }
 
     #[test]

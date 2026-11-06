@@ -140,6 +140,9 @@
     ),
   )
   const filtering = $derived(categoryFilter !== null || discretionaryOnly)
+  const bars = $derived(
+    (discretionaryOnly ? view?.discretionary_categories : view?.categories) ?? [],
+  )
   // Net spending of the rows shown, counted the way Spent is: refunds
   // reduce it, transfers and income don't count.
   const shownSpent = $derived(
@@ -169,15 +172,15 @@
   </div>
 {:else if view}
   <section class="spent" aria-labelledby="spent-heading">
-    <h2 id="spent-heading" class="eyebrow">Spent</h2>
-    <p class="figure">{formatMoney(view.spent_total)}</p>
+    <h2 id="spent-heading" class="eyebrow">{discretionaryOnly ? 'Discretionary spending' : 'Spent'}</h2>
+    <p class="figure">{formatMoney(discretionaryOnly ? view.discretionary_spent_total : view.spent_total)}</p>
   </section>
 
-  {#if view.categories.length > 0}
+  {#if bars.length > 0}
     <section class="card" aria-labelledby="categories-heading">
       <h2 id="categories-heading">By category</h2>
       <CategoryBars
-        bars={view.categories}
+        {bars}
         label="Spending by category; choose one to filter the transactions"
         selected={categoryFilter}
         onselect={toggleCategory}
