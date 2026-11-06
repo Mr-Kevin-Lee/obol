@@ -132,6 +132,8 @@ export interface CategoryBar {
 }
 
 export interface TransactionRow {
+  /** Pays a bill confirmed in the Spending plan, so it isn't discretionary. */
+  bill: boolean
   source_id: string
   id: string
   posted: string

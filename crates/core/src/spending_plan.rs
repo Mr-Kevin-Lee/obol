@@ -258,6 +258,15 @@ pub fn suggest_series(
         .collect()
 }
 
+/// Whether `t` pays one of `plan`'s confirmed bills: what the Spending
+/// plan counts under Bills rather than as category spending. Everything
+/// else that's money out, bar transfers, is discretionary.
+pub fn is_bill_payment(plan: &PlanConfig, t: &CategorizedTransaction) -> bool {
+    plan.series
+        .iter()
+        .any(|series| series.kind == SeriesKind::Bill && matches(series, t))
+}
+
 fn matches(series: &RecurringSeries, t: &CategorizedTransaction) -> bool {
     t.merchant_key == series.merchant_key
         && match series.kind {
@@ -386,6 +395,56 @@ mod tests {
 
     fn paycheck(expected_amount: f64) -> RecurringSeries {
         series("ACME PAYROLL", SeriesKind::Income, expected_amount, 1)
+    }
+
+    #[test]
+    fn should_count_a_payment_to_a_confirmed_bill_as_a_bill_payment() {
+        let plan = with_series(vec![bill("COMCAST", 82.5, 12)]);
+
+        assert!(is_bill_payment(
+            &plan,
+            &tx("COMCAST", "Bills & Utilities", oct(12), -82.5)
+        ));
+    }
+
+    #[test]
+    fn should_count_a_payment_to_any_one_of_several_bills_as_a_bill_payment() {
+        let plan = with_series(vec![bill("RENT CO", 2000.0, 1), bill("COMCAST", 82.5, 12)]);
+
+        assert!(is_bill_payment(
+            &plan,
+            &tx("COMCAST", "Bills & Utilities", oct(12), -82.5)
+        ));
+    }
+
+    #[test]
+    fn should_not_count_a_refund_from_a_bill_payee_as_a_bill_payment() {
+        let plan = with_series(vec![bill("COMCAST", 82.5, 12)]);
+
+        assert!(!is_bill_payment(
+            &plan,
+            &tx("COMCAST", "Bills & Utilities", oct(13), 20.0)
+        ));
+    }
+
+    #[test]
+    fn should_not_count_income_as_a_bill_payment() {
+        let plan = with_series(vec![paycheck(4500.0)]);
+
+        assert!(!is_bill_payment(
+            &plan,
+            &tx("ACME PAYROLL", "Income", oct(1), 4500.0)
+        ));
+    }
+
+    #[test]
+    fn should_not_count_another_merchant_as_a_bill_payment() {
+        let plan = with_series(vec![bill("COMCAST", 82.5, 12)]);
+
+        assert!(!is_bill_payment(
+            &plan,
+            &tx("CORNER CAFE", DINING, oct(12), -82.5)
+        ));
     }
 
     fn with_series(series: Vec<RecurringSeries>) -> PlanConfig {
