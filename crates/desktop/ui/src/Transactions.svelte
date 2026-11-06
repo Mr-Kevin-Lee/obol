@@ -13,7 +13,28 @@
   // The merchant whose category is being saved. One edit at a time, so a
   // slower earlier response can't overwrite a later one's view.
   let pending = $state<string | null>(null)
-  let onlyUncategorized = $state(false)
+  // The one category shown, or every one. The dropdown, the By category
+  // bars and the Uncategorized-only button all set this, so they can never
+  // disagree. Kept across months, so you can follow a category over time.
+  let categoryFilter = $state<string | null>(null)
+
+  const UNCATEGORIZED = 'Uncategorized'
+  // Money moved or earned, not spent: the same two Spent above leaves out.
+  const NOT_SPENDING = new Set(['Transfer', 'Income'])
+
+  // Spending that isn't a bill confirmed in the Spending plan. Combines
+  // with the category filter.
+  let discretionaryOnly = $state(false)
+
+  function clearFilters() {
+    categoryFilter = null
+    discretionaryOnly = false
+  }
+
+  // Choosing the category already shown clears the filter.
+  function toggleCategory(category: string) {
+    categoryFilter = categoryFilter === category ? null : category
+  }
 
   // Responses for a month you've already navigated away from are dropped.
   let latest = 0
@@ -110,14 +131,29 @@
     }
   }
 
-  // The review queue: a client-side filter over the rows the view returned.
+  // A client-side filter over the rows the view returned.
   const rows = $derived(
-    view === null
-      ? []
-      : onlyUncategorized
-        ? view.transactions.filter((t) => t.category === 'Uncategorized')
-        : view.transactions,
+    (view?.transactions ?? []).filter(
+      (t) =>
+        (categoryFilter === null || t.category === categoryFilter) &&
+        (!discretionaryOnly || (!t.bill && !NOT_SPENDING.has(t.category))),
+    ),
   )
+  const filtering = $derived(categoryFilter !== null || discretionaryOnly)
+  // Net spending of the rows shown, counted the way Spent is: refunds
+  // reduce it, transfers and income don't count.
+  const shownSpent = $derived(
+    rows.filter((t) => !NOT_SPENDING.has(t.category)).reduce((sum, t) => sum - t.amount, 0),
+  )
+
+  // The dropdown lists this month's categories, most transactions first,
+  // plus the current filter even when this month has none of it.
+  const filterOptions = $derived.by(() => {
+    const counts = new Map<string, number>()
+    for (const t of view?.transactions ?? []) counts.set(t.category, (counts.get(t.category) ?? 0) + 1)
+    if (categoryFilter !== null && !counts.has(categoryFilter)) counts.set(categoryFilter, 0)
+    return [...counts].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+  })
 </script>
 
 {#if error}
@@ -140,27 +176,67 @@
   {#if view.categories.length > 0}
     <section class="card" aria-labelledby="categories-heading">
       <h2 id="categories-heading">By category</h2>
-      <CategoryBars bars={view.categories} label="Spending by category" />
+      <CategoryBars
+        bars={view.categories}
+        label="Spending by category; choose one to filter the transactions"
+        selected={categoryFilter}
+        onselect={toggleCategory}
+      />
     </section>
   {/if}
 
   <section class="card" aria-labelledby="list-heading">
     <div class="list-header">
       <h2 id="list-heading">Transactions</h2>
-      <button
-        type="button"
-        class="secondary"
-        aria-pressed={onlyUncategorized}
-        onclick={() => (onlyUncategorized = !onlyUncategorized)}
-      >
-        <span aria-hidden="true">{onlyUncategorized ? '☑' : '☐'}</span>
-        Uncategorized only ({view.uncategorized_count})
-      </button>
+      <div class="filters">
+        <label>
+          Category
+          <select
+            value={categoryFilter ?? ''}
+            onchange={(e) => (categoryFilter = e.currentTarget.value || null)}
+          >
+            <option value="">All categories</option>
+            {#each filterOptions as [category, count] (category)}
+              <option value={category}>{category} ({count})</option>
+            {/each}
+          </select>
+        </label>
+        <button
+          type="button"
+          class="secondary"
+          aria-pressed={categoryFilter === UNCATEGORIZED}
+          onclick={() => toggleCategory(UNCATEGORIZED)}
+        >
+          <span aria-hidden="true">{categoryFilter === UNCATEGORIZED ? '☑' : '☐'}</span>
+          Uncategorized only ({view.uncategorized_count})
+        </button>
+        <button
+          type="button"
+          class="secondary"
+          aria-pressed={discretionaryOnly}
+          title="Hides bills confirmed in the Spending plan, transfers and income"
+          onclick={() => (discretionaryOnly = !discretionaryOnly)}
+        >
+          <span aria-hidden="true">{discretionaryOnly ? '☑' : '☐'}</span>
+          Discretionary only
+        </button>
+      </div>
     </div>
+
+    {#if filtering && rows.length > 0}
+      <p class="shown" role="status">
+        {rows.length} {rows.length === 1 ? 'transaction' : 'transactions'} · {formatMoney(shownSpent)} spent
+      </p>
+    {/if}
 
     {#if rows.length === 0}
       <p class="none">
-        <span aria-hidden="true">✓</span> Nothing to review — every transaction this month has a category.
+        {#if categoryFilter === UNCATEGORIZED && !discretionaryOnly}
+          <span aria-hidden="true">✓</span> Nothing to review — every transaction this month has a category.
+        {:else}
+          No transactions in {formatMonth(view.month)} match these filters.
+          <button type="button" class="link" onclick={clearFilters}>Show all</button>
+        {/if}
       </p>
     {:else}
       <table>
@@ -321,6 +397,39 @@
   .list-header button[aria-pressed='true'] {
     border-color: var(--blue);
     font-weight: 600;
+  }
+
+  .filters {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.5rem;
+  }
+
+  .filters label {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    font-size: 0.8125rem;
+    color: var(--text-muted);
+  }
+
+  .shown {
+    margin: 0 0 0.5rem;
+    font-size: 0.8125rem;
+    color: var(--text-muted);
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* A text-style action inside a sentence. */
+  button.link {
+    border: none;
+    background: none;
+    padding: 0;
+    color: var(--blue);
+    font: inherit;
+    text-decoration: underline;
+    cursor: pointer;
   }
 
   table {

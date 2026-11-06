@@ -12,10 +12,11 @@ use std::collections::{BTreeMap, HashMap};
 
 use obol_core::{
     available_categories, categorize, compute_month_plan, display_name, format_iso_date,
-    import_simplifi_rules, load_or_init_merchant_rules, load_or_init_plan, load_recent_snapshots,
-    load_sync_state, load_transactions_range, merchant_key, save_plan, set_merchant_category,
-    suggest_series, CategorizedTransaction, Date, MerchantRules, PaymentStatus, PlanConfig,
-    RecurringSeries, SeriesKind, YearMonth, INCOME, TRANSFER, UNCATEGORIZED,
+    import_simplifi_rules, is_bill_payment, load_or_init_merchant_rules, load_or_init_plan,
+    load_recent_snapshots, load_sync_state, load_transactions_range, merchant_key, save_plan,
+    set_merchant_category, suggest_series, CategorizedTransaction, Date, MerchantRules,
+    PaymentStatus, PlanConfig, RecurringSeries, SeriesKind, YearMonth, INCOME, TRANSFER,
+    UNCATEGORIZED,
 };
 use serde::Serialize;
 
@@ -36,6 +37,9 @@ pub struct CategoryBar {
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct TransactionRow {
+    /// Pays a bill confirmed in the Spending plan, so it isn't
+    /// discretionary spending.
+    pub bill: bool,
     pub source_id: String,
     pub id: String,
     /// `YYYY-MM-DD`.
@@ -143,6 +147,7 @@ pub fn transactions_view(
         .filter(|transaction| month.contains(transaction.transaction.posted))
         .collect();
     let labels = account_labels(layout);
+    let plan = read_plan(layout)?;
 
     let spend = spend_by_category(in_month.iter().copied());
     let spent_total = spend.values().fold(0.0, |total, spent| total + spent);
@@ -153,7 +158,7 @@ pub fn transactions_view(
         categories: category_bars(spend),
         transactions: in_month
             .iter()
-            .map(|transaction| transaction_row(transaction, &labels))
+            .map(|transaction| transaction_row(transaction, &labels, &plan))
             .collect(),
         uncategorized_count: in_month
             .iter()
@@ -493,9 +498,11 @@ fn category_bars(spend: impl IntoIterator<Item = (String, f64)>) -> Vec<Category
 fn transaction_row(
     transaction: &CategorizedTransaction,
     labels: &HashMap<String, String>,
+    plan: &PlanConfig,
 ) -> TransactionRow {
     let source_id = &transaction.transaction.source_id;
     TransactionRow {
+        bill: is_bill_payment(plan, transaction),
         source_id: source_id.clone(),
         id: transaction.transaction.id.clone(),
         posted: format_iso_date(transaction.transaction.posted),
@@ -1391,6 +1398,30 @@ mod tests {
             add_series(&layout, "Comcast", SeriesKind::Bill, 0.0, 12).is_err()
                 && add_series(&layout, "Comcast", SeriesKind::Bill, 82.5, 0).is_err()
         );
+    }
+
+    #[test]
+    fn should_flag_a_payment_to_a_confirmed_bill() {
+        let layout = temp_layout("bill-flag");
+        write_transactions(
+            &layout,
+            vec![tx("chk", "t1", "2026-10-12", -82.5, "COMCAST")],
+        );
+        confirm_series(&layout, series("COMCAST", SeriesKind::Bill, 82.5, 12)).unwrap();
+
+        assert!(transactions_view(&layout, october()).unwrap().transactions[0].bill);
+    }
+
+    #[test]
+    fn should_not_flag_other_spending_as_a_bill() {
+        let layout = temp_layout("bill-flag-other");
+        write_transactions(
+            &layout,
+            vec![tx("chk", "t1", "2026-10-12", -4.0, "CORNER CAFE")],
+        );
+        confirm_series(&layout, series("COMCAST", SeriesKind::Bill, 82.5, 12)).unwrap();
+
+        assert!(!transactions_view(&layout, october()).unwrap().transactions[0].bill);
     }
 
     #[test]
