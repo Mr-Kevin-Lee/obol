@@ -45,6 +45,8 @@ const WORD_PREFIXES: &[&str] = &[
     "POS DEBIT",
     "DEBIT PURCHASE",
     "CHECKCARD",
+    // Apple Pay, as Chase writes it.
+    "APLPAY",
     "POS",
 ];
 
@@ -145,7 +147,9 @@ fn normalize_once(description: &str) -> String {
     while strip_prefix(&mut tokens) {}
     let next = |i: usize| tokens.get(i + 1).map(String::as_str);
     if let Some(cut) = (1..tokens.len()).find(|&i| is_noise(&tokens[i], next(i))) {
+        let kept = glued_name(&tokens[cut]).map(str::to_string);
         tokens.truncate(cut);
+        tokens.extend(kept);
     }
     tokens.retain(|token| token != "*");
     if tokens.last().is_some_and(|token| is_state(token)) {
@@ -241,8 +245,21 @@ fn is_noise(token: &str, next: Option<&str>) -> bool {
                 || is_store_code(token)
                 || is_card_mask(token)
                 || domain_name(token).is_some()
+                || glued_name(token).is_some()
         }
     }
+}
+
+/// The name part of a word with a street or store number glued on:
+/// `ST380` or `ST380S` → `ST`, so `MANDARIN COFFEE ST380 S LAKE AVE` ends
+/// at `MANDARIN COFFEE ST`. Short codes like `AB12CD` aren't glued numbers.
+fn glued_name(token: &str) -> Option<&str> {
+    let letters = token.bytes().take_while(u8::is_ascii_alphabetic).count();
+    let digits = token[letters..]
+        .bytes()
+        .take_while(u8::is_ascii_digit)
+        .count();
+    (letters >= 2 && digits >= 3).then(|| &token[..letters])
 }
 
 /// `1024` or `10/24`.
@@ -344,6 +361,14 @@ mod tests {
         ("BLUE APRON BLUEAPRON.COM NY", "BLUE APRON"),
         ("AMZN.COM/BILL WA", "AMAZON"),
         ("TST* 1000 DEGREES PIZZA", "1000 DEGREES PIZZA"),
+        // Apple Pay, as Chase writes it.
+        ("AplPay TRADER JOE S PASADENA CA", "TRADER JOES PASADENA"),
+        ("AplPay TST* JAM JAM PASADENA CA", "JAM JAM PASADENA"),
+        // A street number glued to the name, with the address after it.
+        (
+            "SQ *MANDARIN COFFEE ST380 S Lake Ave Ste 111 Pasadena 91101 CA USA",
+            "MANDARIN COFFEE ST",
+        ),
     ];
 
     /// Names other streams use as keys: each must already be its own key.

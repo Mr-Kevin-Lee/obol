@@ -111,7 +111,7 @@ export interface ConnectStatus {
 //
 //   invoke<TransactionsView>('get_transactions', { month })
 //   invoke<TransactionsView>('set_merchant_category', { month, merchantKey, category })
-//   invoke<ImportResult>('import_simplifi', { path })  // additive; reload the view after
+//   invoke<ImportResult>('import_simplifi', { path })  // categories only, additive; reload the view after
 //   invoke<SpendingPlanView>('get_spending_plan', { month, today })
 //   invoke<SpendingPlanView>('set_category_target', { month, today, category, target })  // target: number | null (null removes it)
 //   invoke<SpendingPlanView>('confirm_series', { month, today, merchantKey, kind, expectedAmount, dueDay })
@@ -159,7 +159,7 @@ export interface TransactionsView {
 }
 
 export interface ImportResult {
-  added: number
+  /** Merchant categories learned; the import never adds transactions. */
   rules_added: number
 }
 

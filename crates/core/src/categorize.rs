@@ -152,7 +152,7 @@ pub fn categorize(
         .collect();
     let mut resolved: Vec<Option<String>> = keys
         .iter()
-        .map(|key| rules.rules.get(key).cloned())
+        .map(|key| rule_category(rules, key).cloned())
         .collect();
     pair_transfers(transactions, &mut resolved);
 
@@ -212,16 +212,32 @@ fn is_transfer_pair(earlier: &Transaction, later: &Transaction) -> bool {
         && (later.posted - earlier.posted).whole_days() <= 5
 }
 
+/// The longest rule whose words lead `key`'s: an exact rule, else e.g.
+/// `TRADER JOES` for `TRADER JOES PASADENA`, since a bank often appends a
+/// city or address that the name a rule was learned from lacked.
+fn rule_category<'a>(rules: &'a MerchantRules, key: &str) -> Option<&'a String> {
+    rules
+        .rules
+        .iter()
+        .filter(|(prefix, _)| leads(prefix, key))
+        .max_by_key(|(prefix, _)| prefix.len())
+        .map(|(_, category)| category)
+}
+
 /// The longest table entry whose words are a prefix of `key`'s words.
 fn default_category(key: &str) -> Option<&'static str> {
     DEFAULT_CATEGORIES
         .iter()
-        .filter(|(prefix, _)| {
-            key.strip_prefix(prefix)
-                .is_some_and(|rest| rest.is_empty() || rest.starts_with(' '))
-        })
+        .filter(|(prefix, _)| leads(prefix, key))
         .max_by_key(|(prefix, _)| prefix.len())
         .map(|&(_, category)| category)
+}
+
+/// `prefix`'s words are `key`'s first words: `UBER` leads `UBER TRIP` but
+/// not `UBERRIMA`.
+fn leads(prefix: &str, key: &str) -> bool {
+    key.strip_prefix(prefix)
+        .is_some_and(|rest| rest.is_empty() || rest.starts_with(' '))
 }
 
 #[cfg(test)]
@@ -237,6 +253,43 @@ mod tests {
             amount,
             description: description.into(),
         }
+    }
+
+    fn with_rules(description: &str, rules: &MerchantRules) -> String {
+        categorize(&[tx("chk", "t1", 1, -5.0, description)], rules)
+            .remove(0)
+            .category
+    }
+
+    #[test]
+    fn should_apply_a_rule_to_a_longer_name_by_leading_words() {
+        let rules = rules(&[("JAM JAM", "Dining & Drinks")]);
+
+        assert_eq!(with_rules("JAM JAM PASADENA", &rules), "Dining & Drinks");
+    }
+
+    #[test]
+    fn should_prefer_the_longest_matching_rule() {
+        let rules = rules(&[("CORNER", "Shopping"), ("CORNER CAFE", "Dining & Drinks")]);
+
+        assert_eq!(
+            with_rules("CORNER CAFE PASADENA", &rules),
+            "Dining & Drinks"
+        );
+    }
+
+    #[test]
+    fn should_not_match_a_rule_inside_a_word() {
+        let rules = rules(&[("JAM", "Dining & Drinks")]);
+
+        assert_eq!(with_rules("JAMBA JUICE", &rules), UNCATEGORIZED);
+    }
+
+    #[test]
+    fn should_let_a_leading_words_rule_beat_a_default() {
+        let rules = rules(&[("TARGET", "Groceries")]);
+
+        assert_eq!(with_rules("TARGET PASADENA", &rules), "Groceries");
     }
 
     fn rules(pairs: &[(&str, &str)]) -> MerchantRules {
