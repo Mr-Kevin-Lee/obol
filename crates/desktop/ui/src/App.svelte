@@ -73,6 +73,10 @@
     --text: #1d1d1f;
     --text-muted: #6e6e73;
 
+    /* New York on Apple platforms: headings and the big figures. */
+    --font-display: ui-serif, 'New York', 'Iowan Old Style', Georgia, serif;
+    --font-mono: ui-monospace, 'SF Mono', Menlo, monospace;
+
     color-scheme: light dark;
   }
 
@@ -103,17 +107,32 @@
   }
 
   :global(code) {
-    font-family: ui-monospace, 'SF Mono', Menlo, monospace;
+    font-family: var(--font-mono);
     font-size: 0.9em;
   }
 
+  /* Headings set in the display serif, tight like a headline. Tables and
+     controls stay in the system sans, where figures line up best. */
+  :global(h1),
+  :global(h2),
+  :global(.figure) {
+    font-family: var(--font-display);
+    letter-spacing: -0.015em;
+  }
+
+  /* A small, spaced-out label led by a dash: "— SPENT". */
   :global(.eyebrow) {
     margin: 0;
-    font-size: 0.75rem;
-    font-weight: 600;
-    letter-spacing: 0.06em;
+    font-family: var(--font-mono);
+    font-size: 0.6875rem;
+    font-weight: 400;
+    letter-spacing: 0.14em;
     text-transform: uppercase;
     color: var(--text-muted);
+  }
+
+  :global(.eyebrow)::before {
+    content: '— ';
   }
 
   /* Shared by every screen. */
@@ -191,7 +210,8 @@
 
   :global(.empty h2) {
     margin: 0;
-    font-size: 1.25rem;
+    font-size: 1.75rem;
+    font-weight: 600;
     color: var(--text);
   }
 
@@ -209,7 +229,7 @@
 
   :global(.card > h2) {
     margin: 0 0 0.75rem;
-    font-size: 1rem;
+    font-size: 1.25rem;
     font-weight: 600;
   }
 
@@ -230,7 +250,7 @@
 
   h1 {
     margin: 0;
-    font-size: 1.25rem;
+    font-size: 1.625rem;
     font-weight: 600;
   }
 

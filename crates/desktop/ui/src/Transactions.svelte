@@ -488,9 +488,10 @@
 
   .figure {
     margin: 0.25rem 0 0;
-    font-size: 2.25rem;
+    font-size: 3rem;
     font-weight: 600;
-    letter-spacing: -0.02em;
+    letter-spacing: -0.025em;
+    line-height: 1.1;
     font-variant-numeric: tabular-nums;
   }
 
@@ -504,7 +505,7 @@
 
   .list-header h2 {
     margin: 0;
-    font-size: 1rem;
+    font-size: 1.25rem;
     font-weight: 600;
   }
 

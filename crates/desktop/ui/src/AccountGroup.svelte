@@ -79,7 +79,7 @@
 
   h2 {
     margin: 0;
-    font-size: 1rem;
+    font-size: 1.25rem;
     font-weight: 600;
   }
 
