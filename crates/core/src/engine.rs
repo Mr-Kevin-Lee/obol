@@ -910,12 +910,21 @@ mod tests {
         };
 
         tracing::subscriber::with_default(subscriber, || {
-            // A parallel test logging with no subscriber can cache these
-            // callsites as never-enabled, which would drop this test's
-            // events and fail it intermittently (seen 1 in 30 full runs).
-            tracing::callsite::rebuild_interest_cache();
-            log_outcome(&ok_record);
-            log_outcome(&bad_record);
+            // A parallel test that first logs with no subscriber can register
+            // these callsites as never-enabled after this rebuild has run
+            // (tracing-core 0.1.36), dropping this test's events. That race
+            // ends once its registration does, so rebuild and log again.
+            // Every attempt stays in `captured` for the privacy checks below.
+            for _ in 0..100 {
+                tracing::callsite::rebuild_interest_cache();
+                log_outcome(&ok_record);
+                log_outcome(&bad_record);
+                let text = String::from_utf8_lossy(&captured.lock().unwrap()).into_owned();
+                if text.contains("ok_source") && text.contains("bad_source") {
+                    break;
+                }
+                std::thread::yield_now();
+            }
         });
 
         let output = String::from_utf8(captured.lock().unwrap().clone()).unwrap();
