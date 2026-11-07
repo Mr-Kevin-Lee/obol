@@ -33,6 +33,10 @@ pub struct DashboardView {
     /// `None` on a first-ever run, or when either snapshot's net worth
     /// isn't computable — there's nothing meaningful to diff against.
     pub delta: Option<DeltaView>,
+    /// Net worth per saved snapshot, oldest first, for the sparkline.
+    /// Filled in by the dashboard loaders, which hold the history;
+    /// [`build`] sees only two snapshots and leaves it empty.
+    pub trend: Vec<f64>,
 }
 
 /// Internally tagged so the frontend branches on `kind` rather than on
@@ -96,7 +100,23 @@ pub fn build(snapshot: &Snapshot, previous: Option<&Snapshot>) -> DashboardView 
         liabilities_subtotal: subtotal(&liabilities),
         assets,
         liabilities,
+        trend: Vec::new(),
     }
+}
+
+/// Net worth of each snapshot, oldest first. A snapshot whose net worth
+/// can't be computed (every source failed) is skipped rather than drawn
+/// as a drop to zero, the same rule [`delta`] applies.
+pub fn trend<'a>(newest_first: impl DoubleEndedIterator<Item = &'a Snapshot>) -> Vec<f64> {
+    newest_first
+        .rev()
+        .filter_map(
+            |snapshot| match calculate_net_worth_from_records(&snapshot.accounts) {
+                NetWorth::Computed(value) => Some(value),
+                NetWorth::Unavailable { .. } => None,
+            },
+        )
+        .collect()
 }
 
 impl From<NetWorth> for NetWorthView {
@@ -268,6 +288,39 @@ mod tests {
             "currency": "USD",
             "status": "ok",
         })
+    }
+
+    fn snap(created_at: &str, balance: f64) -> Snapshot {
+        snapshot_at(created_at, json!([asset("chase", balance)]))
+    }
+
+    #[test]
+    fn should_list_trend_oldest_first_from_newest_first_input() {
+        let newest = snap("2026-10-26T09:00:00-07:00", 300.0);
+        let older = snap("2026-10-19T09:00:00-07:00", 200.0);
+        let oldest = snap("2026-10-12T09:00:00-07:00", 100.0);
+
+        assert_eq!(
+            trend([&newest, &older, &oldest].into_iter()),
+            vec![100.0, 200.0, 300.0]
+        );
+    }
+
+    #[test]
+    fn should_skip_snapshots_without_a_computable_net_worth_in_the_trend() {
+        let failed = snapshot_of(json!([{
+            "account_key": "sha256:a", "source_id": "chase", "institution": "Chase",
+            "category": "asset", "type": "checking", "balance": null,
+            "currency": "USD", "status": "error", "error_message": "boom",
+        }]));
+        let good = snap(EARLIER, 100.0);
+
+        assert_eq!(trend([&failed, &good].into_iter()), vec![100.0]);
+    }
+
+    #[test]
+    fn should_have_an_empty_trend_without_snapshots() {
+        assert_eq!(trend(std::iter::empty()), Vec::<f64>::new());
     }
 
     fn asset_ids(view: &DashboardView) -> Vec<&str> {

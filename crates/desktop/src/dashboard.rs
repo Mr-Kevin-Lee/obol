@@ -75,12 +75,17 @@ pub fn resolve_storage_root(
 /// The newest snapshot on disk, diffed against the one before it. `None`
 /// on a fresh install with no history yet.
 pub fn load_dashboard(layout: &StorageLayout) -> Result<Option<DashboardView>, String> {
-    let recent = obol_core::load_recent_snapshots(&layout.snapshots, 2)
+    let recent = obol_core::load_recent_snapshots(&layout.snapshots, TREND_SNAPSHOTS)
         .map_err(|err| format!("snapshot history could not be read: {err}"))?;
-    Ok(recent
-        .first()
-        .map(|newest| view::build(newest, recent.get(1))))
+    Ok(recent.first().map(|newest| {
+        let mut view = view::build(newest, recent.get(1));
+        view.trend = view::trend(recent.iter());
+        view
+    }))
 }
+
+/// How many snapshots the net worth sparkline draws.
+const TREND_SNAPSHOTS: usize = 30;
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct RefreshResult {
@@ -130,10 +135,9 @@ pub async fn refresh_dashboard(
     // it would be the snapshot this refresh just wrote. Unreadable history
     // only costs the delta, so it degrades to "no previous" rather than
     // failing a refresh that can otherwise succeed.
-    let previous = obol_core::load_recent_snapshots(&layout.snapshots, 1)
-        .unwrap_or_default()
-        .into_iter()
-        .next();
+    let before = obol_core::load_recent_snapshots(&layout.snapshots, TREND_SNAPSHOTS - 1)
+        .unwrap_or_default();
+    let previous = before.first();
 
     let result = obol_core::run_and_save_with_simplefin_url(
         &sources,
@@ -144,8 +148,11 @@ pub async fn refresh_dashboard(
     )
     .await;
 
+    let mut view = view::build(&result.snapshot, previous);
+    view.trend = view::trend(std::iter::once(&result.snapshot).chain(before.iter()));
+
     Ok(RefreshResult {
-        view: view::build(&result.snapshot, previous.as_ref()),
+        view,
         save_warning: result
             .save_error
             // Shown on its own as a banner, so phrased as a full sentence.
@@ -244,6 +251,30 @@ mod tests {
             "sources:\n  - id: chase_checking\n    provider: fixed\n    category: asset\n    type: checking\n    institution: Chase\n    account_salt: test-salt\n",
         )
         .unwrap();
+    }
+
+    // --- trend ---
+
+    #[test]
+    fn should_load_a_trend_of_saved_net_worth_oldest_first() {
+        let root = temp_root("trend-load");
+        let layout = StorageLayout::under(&root);
+        save_snapshot_aged(
+            &layout.snapshots,
+            "2026-10-12T09:00:00-07:00",
+            100.0,
+            Duration::from_secs(3 * 86_400),
+        );
+        save_snapshot_aged(
+            &layout.snapshots,
+            "2026-10-19T09:00:00-07:00",
+            250.0,
+            Duration::from_secs(86_400),
+        );
+
+        let view = load_dashboard(&layout).unwrap().unwrap();
+
+        assert_eq!(view.trend, vec![100.0, 250.0]);
     }
 
     // --- resolve_storage_root ---
@@ -434,6 +465,24 @@ mod tests {
             result.view.delta.map(|d| (d.amount, d.since)),
             Some((100.0, "2026-01-01T09:00:00Z".to_string()))
         );
+    }
+
+    #[tokio::test]
+    async fn should_end_the_refresh_trend_with_the_just_fetched_balance() {
+        let layout = StorageLayout::under(&temp_root("refresh-trend"));
+        write_fixed_source(&layout);
+        save_snapshot_aged(
+            &layout.snapshots,
+            "2026-01-01T09:00:00Z",
+            400.0,
+            Duration::from_secs(7200),
+        );
+
+        let result = refresh_dashboard(&layout, &fixed_balance_registry(500.0), None)
+            .await
+            .unwrap();
+
+        assert_eq!(result.view.trend, vec![400.0, 500.0]);
     }
 
     #[tokio::test]

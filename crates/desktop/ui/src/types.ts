@@ -32,6 +32,8 @@ export interface DashboardView {
   assets_subtotal: number
   liabilities_subtotal: number
   delta: DeltaView | null
+  /** Net worth per saved snapshot, oldest first (the sparkline). */
+  trend: number[]
 }
 
 export interface RefreshResult {
