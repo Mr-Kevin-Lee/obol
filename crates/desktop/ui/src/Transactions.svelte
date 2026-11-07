@@ -170,6 +170,26 @@
         (!discretionaryOnly || (!t.bill && !NOT_SPENDING.has(t.category))),
     ),
   )
+  // The view arrives newest first. Amount sorts on the signed value, so
+  // ascending puts the most money out first and income last. Sorting is
+  // stable, so equal amounts stay newest first.
+  type SortKey = 'date' | 'amount'
+  let sort = $state<{ key: SortKey; ascending: boolean }>({ key: 'date', ascending: false })
+
+  // A new column starts at its most useful end; the same column reverses.
+  function sortBy(key: SortKey) {
+    sort = sort.key === key ? { key, ascending: !sort.ascending } : { key, ascending: key === 'amount' }
+  }
+
+  const sorted = $derived(
+    [...rows].sort((a, b) => {
+      const order = sort.key === 'date' ? a.posted.localeCompare(b.posted) : a.amount - b.amount
+      return sort.ascending ? order : -order
+    }),
+  )
+  const ariaSort = (key: SortKey) =>
+    sort.key === key ? (sort.ascending ? 'ascending' : 'descending') : undefined
+
   const filtering = $derived(categoryFilter !== null || discretionaryOnly)
   const bars = $derived(
     (discretionaryOnly ? view?.discretionary_categories : view?.categories) ?? [],
@@ -276,16 +296,24 @@
       <table>
         <thead>
           <tr>
-            <th scope="col">Date</th>
+            <th scope="col" aria-sort={ariaSort('date')}>
+              <button type="button" class="sort" onclick={() => sortBy('date')}>
+                Date{#if sort.key === 'date'}<span aria-hidden="true">{sort.ascending ? ' ↑' : ' ↓'}</span>{/if}
+              </button>
+            </th>
             <th scope="col">Merchant</th>
             <th scope="col">Account</th>
             <th scope="col">Category</th>
             <th scope="col"><span class="visually-hidden">Bill</span></th>
-            <th scope="col" class="amount">Amount</th>
+            <th scope="col" class="amount" aria-sort={ariaSort('amount')}>
+              <button type="button" class="sort" onclick={() => sortBy('amount')}>
+                Amount{#if sort.key === 'amount'}<span aria-hidden="true">{sort.ascending ? ' ↑' : ' ↓'}</span>{/if}
+              </button>
+            </th>
           </tr>
         </thead>
         <tbody>
-          {#each rows as row (`${row.source_id}:${row.id}`)}
+          {#each sorted as row (`${row.source_id}:${row.id}`)}
             <tr>
               <td class="date">{formatDate(row.posted)}</td>
               <td>{row.merchant_name}</td>
@@ -497,6 +525,24 @@
     color: var(--text-muted);
     padding: 0 0.5rem 0.5rem;
     border-bottom: 1px solid var(--border);
+  }
+
+  /* A header that sorts: looks like the other headers. */
+  button.sort {
+    border: none;
+    background: none;
+    padding: 0;
+    font: inherit;
+    color: inherit;
+    cursor: pointer;
+  }
+
+  button.sort:hover {
+    color: var(--text);
+  }
+
+  th[aria-sort] {
+    color: var(--text);
   }
 
   td {
