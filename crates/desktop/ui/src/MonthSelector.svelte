@@ -35,9 +35,9 @@
 
   h2 {
     margin: 0;
-    min-width: 10rem;
+    min-width: 12rem;
     text-align: center;
-    font-size: 1.125rem;
+    font-size: 1.5rem;
     font-weight: 600;
   }
 
