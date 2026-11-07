@@ -117,7 +117,7 @@ pub use plan_storage::{load_or_init_plan, save_plan, PlanStorageError};
 pub use simplifi_import::{import_simplifi_rules, parse_simplifi_rules, SimplifiImportError};
 pub use spending_plan::{
     compute_month_plan, is_bill_payment, suggest_series, CategorySpend, MonthPlan, PaymentStatus,
-    PlanConfig, RecurringSeries, SeriesKind, SeriesStatus,
+    PlanConfig, RecurringSeries, SeriesKind, SeriesStatus, TransactionRef,
 };
 pub use time::Date;
 pub use transaction::{

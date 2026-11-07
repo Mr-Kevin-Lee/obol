@@ -46,7 +46,7 @@ mod tests {
     use std::path::PathBuf;
 
     use super::*;
-    use crate::spending_plan::{RecurringSeries, SeriesKind};
+    use crate::spending_plan::{RecurringSeries, SeriesKind, TransactionRef};
 
     fn temp_path(name: &str) -> PathBuf {
         let dir = std::env::temp_dir().join(format!(
@@ -76,7 +76,22 @@ mod tests {
                 },
             ],
             dismissed: ["AMAZON".to_string()].into(),
+            excluded: [TransactionRef {
+                source_id: "chase_checking".into(),
+                id: "txn-95k".into(),
+            }]
+            .into(),
         }
+    }
+
+    #[test]
+    fn should_load_a_plan_written_before_exclusions_existed() {
+        let path = temp_path("no-excluded");
+        fs::write(&path, "dismissed:\n  - AMAZON\n").unwrap();
+
+        let plan = load_or_init_plan(&path).unwrap();
+
+        assert!(plan.excluded.is_empty());
     }
 
     #[test]
@@ -108,7 +123,7 @@ mod tests {
     }
 
     #[test]
-    fn should_round_trip_targets_series_and_dismissed() {
+    fn should_round_trip_targets_series_dismissed_and_excluded() {
         let path = temp_path("round-trip");
         save_plan(&path, &populated_plan()).unwrap();
 

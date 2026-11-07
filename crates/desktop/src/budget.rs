@@ -15,8 +15,8 @@ use obol_core::{
     import_simplifi_rules, is_bill_payment, load_or_init_merchant_rules, load_or_init_plan,
     load_recent_snapshots, load_sync_state, load_transactions_range, merchant_key, save_plan,
     set_merchant_category, suggest_series, CategorizedTransaction, Date, MerchantRules,
-    PaymentStatus, PlanConfig, RecurringSeries, SeriesKind, YearMonth, INCOME, TRANSFER,
-    UNCATEGORIZED,
+    PaymentStatus, PlanConfig, RecurringSeries, SeriesKind, TransactionRef, YearMonth, INCOME,
+    TRANSFER, UNCATEGORIZED,
 };
 use serde::Serialize;
 
@@ -40,6 +40,8 @@ pub struct TransactionRow {
     /// Pays a bill confirmed in the Spending plan, so it isn't
     /// discretionary spending.
     pub bill: bool,
+    /// Left out of every total, bar and the Spending plan, by hand.
+    pub excluded: bool,
     pub source_id: String,
     pub id: String,
     /// `YYYY-MM-DD`.
@@ -153,9 +155,14 @@ pub fn transactions_view(
     let labels = account_labels(layout);
     let plan = read_plan(layout)?;
 
-    let (spent_total, categories) = spending(in_month.iter().copied());
+    let counted: Vec<&CategorizedTransaction> = in_month
+        .iter()
+        .copied()
+        .filter(|transaction| !plan.is_excluded(&transaction.transaction))
+        .collect();
+    let (spent_total, categories) = spending(counted.iter().copied());
     let (discretionary_spent_total, discretionary_categories) = spending(
-        in_month
+        counted
             .iter()
             .copied()
             .filter(|transaction| !is_bill_payment(&plan, transaction)),
@@ -426,6 +433,25 @@ fn read_plan(layout: &StorageLayout) -> Result<PlanConfig, String> {
     load_or_init_plan(&layout.plan).map_err(|err| err.to_string())
 }
 
+/// Leaves one transaction out of spending and the plan, or counts it again.
+pub fn set_excluded(
+    layout: &StorageLayout,
+    transaction: TransactionRef,
+    excluded: bool,
+) -> Result<(), String> {
+    let transaction = TransactionRef {
+        source_id: non_empty(&transaction.source_id, "source")?.to_string(),
+        id: non_empty(&transaction.id, "transaction id")?.to_string(),
+    };
+    update_plan(layout, |plan| {
+        if excluded {
+            plan.excluded.insert(transaction);
+        } else {
+            plan.excluded.remove(&transaction);
+        }
+    })
+}
+
 fn update_plan(layout: &StorageLayout, change: impl FnOnce(&mut PlanConfig)) -> Result<(), String> {
     let mut plan = load_or_init_plan(&layout.plan).map_err(|err| err.to_string())?;
     change(&mut plan);
@@ -523,6 +549,7 @@ fn transaction_row(
     let source_id = &transaction.transaction.source_id;
     TransactionRow {
         bill: is_bill_payment(plan, transaction),
+        excluded: plan.is_excluded(&transaction.transaction),
         source_id: source_id.clone(),
         id: transaction.transaction.id.clone(),
         posted: format_iso_date(transaction.transaction.posted),
@@ -1513,6 +1540,136 @@ mod tests {
         let view = transactions_view(&layout, october()).unwrap();
 
         assert_eq!(view.discretionary_spent_total, 50.0);
+    }
+
+    /// $50 of shopping beside a $95,000 move to Vanguard, which is excluded.
+    fn shopping_and_excluded_transfer(name: &str) -> StorageLayout {
+        let layout = temp_layout(name);
+        write_rules(&layout, &[("AMAZON", "Shopping")]);
+        write_transactions(
+            &layout,
+            vec![
+                tx("card", "a", "2026-10-21", -50.0, "AMAZON"),
+                tx(
+                    "checking",
+                    "v",
+                    "2026-10-27",
+                    -95000.0,
+                    "VANGUARD MARKETS PAYMENTS",
+                ),
+            ],
+        );
+        set_excluded(&layout, transaction_ref("checking", "v"), true).unwrap();
+        layout
+    }
+
+    fn transaction_ref(source_id: &str, id: &str) -> TransactionRef {
+        TransactionRef {
+            source_id: source_id.into(),
+            id: id.into(),
+        }
+    }
+
+    fn row<'a>(view: &'a TransactionsView, id: &str) -> &'a TransactionRow {
+        view.transactions.iter().find(|row| row.id == id).unwrap()
+    }
+
+    #[test]
+    fn should_flag_an_excluded_transaction() {
+        let layout = shopping_and_excluded_transfer("excl-flag");
+
+        let view = transactions_view(&layout, october()).unwrap();
+
+        assert!(row(&view, "v").excluded);
+    }
+
+    #[test]
+    fn should_not_flag_other_transactions_as_excluded() {
+        let layout = shopping_and_excluded_transfer("excl-flag-other");
+
+        let view = transactions_view(&layout, october()).unwrap();
+
+        assert!(!row(&view, "a").excluded);
+    }
+
+    #[test]
+    fn should_leave_an_excluded_transaction_out_of_the_spent_total() {
+        let layout = shopping_and_excluded_transfer("excl-total");
+
+        let view = transactions_view(&layout, october()).unwrap();
+
+        assert_eq!(view.spent_total, 50.0);
+    }
+
+    #[test]
+    fn should_leave_an_excluded_transaction_out_of_the_bars() {
+        let layout = shopping_and_excluded_transfer("excl-bars");
+
+        let view = transactions_view(&layout, october()).unwrap();
+
+        let categories: Vec<&str> = view
+            .categories
+            .iter()
+            .map(|bar| bar.category.as_str())
+            .collect();
+        assert_eq!(categories, ["Shopping"]);
+    }
+
+    #[test]
+    fn should_leave_an_excluded_transaction_out_of_the_discretionary_total() {
+        let layout = shopping_and_excluded_transfer("excl-disc");
+
+        let view = transactions_view(&layout, october()).unwrap();
+
+        assert_eq!(view.discretionary_spent_total, 50.0);
+    }
+
+    #[test]
+    fn should_leave_an_excluded_transaction_out_of_the_spending_plan() {
+        let layout = shopping_and_excluded_transfer("excl-plan");
+
+        let view = spending_plan_view(&layout, october(), today()).unwrap();
+
+        assert_eq!(view.other, 50.0);
+    }
+
+    #[test]
+    fn should_count_a_transaction_again_once_included() {
+        let layout = shopping_and_excluded_transfer("excl-undo");
+
+        set_excluded(&layout, transaction_ref("checking", "v"), false).unwrap();
+
+        assert_eq!(
+            transactions_view(&layout, october()).unwrap().spent_total,
+            95050.0
+        );
+    }
+
+    #[test]
+    fn should_keep_other_exclusions_when_including_one() {
+        let layout = shopping_and_excluded_transfer("excl-undo-other");
+        set_excluded(&layout, transaction_ref("card", "a"), true).unwrap();
+
+        set_excluded(&layout, transaction_ref("card", "a"), false).unwrap();
+
+        assert_eq!(
+            transactions_view(&layout, october()).unwrap().spent_total,
+            50.0
+        );
+    }
+
+    #[test]
+    fn should_reject_excluding_a_transaction_without_an_id() {
+        let layout = temp_layout("excl-empty-id");
+
+        assert!(set_excluded(&layout, transaction_ref("checking", " "), true).is_err());
+    }
+
+    #[test]
+    fn should_reject_excluding_a_transaction_without_a_source() {
+        let layout = temp_layout("excl-empty-source");
+
+        assert!(set_excluded(&layout, transaction_ref("", "v"), true).is_err());
     }
 
     #[test]

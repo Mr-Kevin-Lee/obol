@@ -114,6 +114,28 @@
     }
   }
 
+  // Just this one transaction, unlike a category or a bill.
+  async function toggleExcluded(row: TransactionRow) {
+    const request = latest
+    pending = row.merchant_key
+    error = null
+    try {
+      const result = await invoke<TransactionsView>('set_transaction_excluded', {
+        month,
+        sourceId: row.source_id,
+        id: row.id,
+        excluded: !row.excluded,
+      })
+      if (request === latest) view = result
+    } catch (e) {
+      if (request === latest) {
+        error = `Couldn't ${row.excluded ? 'include' : 'exclude'} the ${row.merchant_name} transaction: ${e}`
+      }
+    } finally {
+      pending = null
+    }
+  }
+
   let fileInput = $state<HTMLInputElement | null>(null)
   let importing = $state(false)
   let imported = $state<string | null>(null)
@@ -167,7 +189,7 @@
     (view?.transactions ?? []).filter(
       (t) =>
         (categoryFilter === null || t.category === categoryFilter) &&
-        (!discretionaryOnly || (!t.bill && !NOT_SPENDING.has(t.category))),
+        (!discretionaryOnly || (!t.bill && !t.excluded && !NOT_SPENDING.has(t.category))),
     ),
   )
   // The view arrives newest first. Amount sorts on the signed value, so
@@ -195,9 +217,11 @@
     (discretionaryOnly ? view?.discretionary_categories : view?.categories) ?? [],
   )
   // Net spending of the rows shown, counted the way Spent is: refunds
-  // reduce it, transfers and income don't count.
+  // reduce it; transfers, income and excluded rows don't count.
   const shownSpent = $derived(
-    rows.filter((t) => !NOT_SPENDING.has(t.category)).reduce((sum, t) => sum - t.amount, 0),
+    rows
+      .filter((t) => !t.excluded && !NOT_SPENDING.has(t.category))
+      .reduce((sum, t) => sum - t.amount, 0),
   )
 
   // The dropdown lists this month's categories, most transactions first,
@@ -314,7 +338,7 @@
         </thead>
         <tbody>
           {#each sorted as row (`${row.source_id}:${row.id}`)}
-            <tr>
+            <tr class:excluded={row.excluded}>
               <td class="date">{formatDate(row.posted)}</td>
               <td>{row.merchant_name}</td>
               <td class="muted">{row.account_label}</td>
@@ -333,11 +357,11 @@
                   <span class="saving" role="status">Saving…</span>
                 {/if}
               </td>
-              <td>
-                {#if row.amount < 0 && !NOT_SPENDING.has(row.category)}
+              <td class="actions">
+                {#if row.amount < 0 && !row.excluded && !NOT_SPENDING.has(row.category)}
                   <button
                     type="button"
-                    class="bill"
+                    class="toggle"
                     aria-pressed={row.bill}
                     aria-label="Payments to {row.merchant_name} are a bill"
                     title={row.bill
@@ -347,6 +371,21 @@
                     onclick={() => toggleBill(row)}
                   >
                     {row.bill ? '✓ Bill' : '+ Bill'}
+                  </button>
+                {/if}
+                {#if row.category !== 'Transfer'}
+                  <button
+                    type="button"
+                    class="toggle"
+                    aria-pressed={row.excluded}
+                    aria-label="Exclude this {row.merchant_name} transaction"
+                    title={row.excluded
+                      ? 'Left out of spending and the Spending plan; choose to count it again'
+                      : 'Leave just this transaction out of spending and the Spending plan'}
+                    disabled={pending !== null}
+                    onclick={() => toggleExcluded(row)}
+                  >
+                    {row.excluded ? 'Excluded' : 'Exclude'}
                   </button>
                 {/if}
               </td>
@@ -585,7 +624,7 @@
   }
 
   /* Quiet until it's on, so a column of them doesn't shout. */
-  button.bill {
+  button.toggle {
     font-size: 0.75rem;
     padding: 0.125rem 0.5rem;
     white-space: nowrap;
@@ -594,14 +633,27 @@
     background: none;
   }
 
-  button.bill:hover:not(:disabled) {
+  button.toggle:hover:not(:disabled) {
     border-color: var(--border);
   }
 
-  button.bill[aria-pressed='true'] {
+  button.toggle[aria-pressed='true'] {
     color: var(--blue);
     border-color: var(--blue);
     font-weight: 600;
+  }
+
+  .actions {
+    white-space: nowrap;
+  }
+
+  /* Still listed so it can be counted again, but visibly out of the sums. */
+  tr.excluded td:not(.actions) {
+    opacity: 0.5;
+  }
+
+  tr.excluded .amount {
+    text-decoration: line-through;
   }
 
   .visually-hidden {

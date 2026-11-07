@@ -31,6 +31,8 @@
 //!   `Income` or `Transfer` are ignored.
 //! - **Other** = Σ spent over untargeted categories, `Uncategorized`
 //!   included.
+//! - **Excluded** transactions (`plan.yaml`'s `excluded`, by source and id)
+//!   count nowhere: not as income, spending, or a series payment.
 //! - **Left** = Income − Bills − Planned − Other.
 //! - **Per day** = Left ÷ days remaining after today, current month only;
 //!   `None` on its last day and for any other month.
@@ -38,7 +40,7 @@
 //! Sums must start from `+0.0`, not use `Iterator::sum`, whose `f64`
 //! identity is `-0.0` and renders as "-$0.00" (found in Phase V).
 //!
-//! **Suggestions**: non-transfer transactions grouped by merchant key. A
+//! **Suggestions**: non-transfer, non-excluded transactions grouped by merchant key. A
 //! merchant qualifies if it appears in at least 2 distinct months, always
 //! with the same strict sign (all < 0 or all > 0), with an amount spread
 //! (max − min magnitude) of at most 20% of the median magnitude and a
@@ -86,6 +88,25 @@ pub struct PlanConfig {
     /// Merchant keys whose suggestion was dismissed.
     #[serde(default)]
     pub dismissed: BTreeSet<String>,
+    /// Single transactions left out of spending and the plan, such as a
+    /// one-off move of savings that no category describes.
+    #[serde(default)]
+    pub excluded: BTreeSet<TransactionRef>,
+}
+
+/// Names one transaction: its provider id is only unique within a source.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+pub struct TransactionRef {
+    pub source_id: String,
+    pub id: String,
+}
+
+impl PlanConfig {
+    pub fn is_excluded(&self, t: &Transaction) -> bool {
+        self.excluded
+            .iter()
+            .any(|r| r.source_id == t.source_id && r.id == t.id)
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -138,7 +159,11 @@ pub fn compute_month_plan(
 ) -> MonthPlan {
     let in_month: Vec<&CategorizedTransaction> = transactions
         .iter()
-        .filter(|t| month.contains(t.transaction.posted) && !t.is_transfer())
+        .filter(|t| {
+            month.contains(t.transaction.posted)
+                && !t.is_transfer()
+                && !plan.is_excluded(&t.transaction)
+        })
         .collect();
     let is_series_match = |t: &CategorizedTransaction| plan.series.iter().any(|s| matches(s, t));
 
@@ -242,7 +267,10 @@ pub fn suggest_series(
     plan: &PlanConfig,
 ) -> Vec<RecurringSeries> {
     let mut by_merchant: BTreeMap<&str, Vec<&Transaction>> = BTreeMap::new();
-    for t in history.iter().filter(|t| !t.is_transfer()) {
+    for t in history
+        .iter()
+        .filter(|t| !t.is_transfer() && !plan.is_excluded(&t.transaction))
+    {
         by_merchant
             .entry(t.merchant_key.as_str())
             .or_default()
@@ -466,6 +494,106 @@ mod tests {
 
     fn plan_for(transactions: &[CategorizedTransaction], plan: &PlanConfig) -> MonthPlan {
         compute_month_plan(october(), transactions, plan, today())
+    }
+
+    fn reference(t: &CategorizedTransaction) -> TransactionRef {
+        TransactionRef {
+            source_id: t.transaction.source_id.clone(),
+            id: t.transaction.id.clone(),
+        }
+    }
+
+    fn excluding(plan: PlanConfig, t: &CategorizedTransaction) -> PlanConfig {
+        PlanConfig {
+            excluded: [reference(t)].into(),
+            ..plan
+        }
+    }
+
+    // --- Excluded transactions ---
+
+    #[test]
+    fn should_leave_an_excluded_transaction_out_of_other() {
+        let transfer = tx("VANGUARD", UNCATEGORIZED, oct(27), -95000.0);
+        let transactions = [tx("SAFEWAY", GROCERIES, oct(3), -80.0), transfer.clone()];
+
+        let plan = plan_for(&transactions, &excluding(PlanConfig::default(), &transfer));
+
+        assert_eq!(plan.other, 80.0);
+    }
+
+    #[test]
+    fn should_leave_an_excluded_transaction_out_of_its_category() {
+        let transfer = tx("VANGUARD", UNCATEGORIZED, oct(27), -95000.0);
+
+        let plan = plan_for(
+            std::slice::from_ref(&transfer),
+            &excluding(PlanConfig::default(), &transfer),
+        );
+
+        assert_eq!(plan.categories, []);
+    }
+
+    #[test]
+    fn should_leave_an_excluded_inflow_out_of_income() {
+        let gift = tx("GRANDMA", INCOME, oct(5), 500.0);
+
+        let plan = plan_for(
+            std::slice::from_ref(&gift),
+            &excluding(PlanConfig::default(), &gift),
+        );
+
+        assert_eq!(plan.income, 0.0);
+    }
+
+    #[test]
+    fn should_not_mark_a_bill_paid_by_an_excluded_payment() {
+        let payment = tx("NETFLIX", "Bills", oct(12), -15.0);
+        let config = excluding(with_series(vec![bill("NETFLIX", 15.0, 12)]), &payment);
+
+        let plan = plan_for(&[payment], &config);
+
+        assert_eq!(plan.series[0].status, PaymentStatus::PastDue);
+    }
+
+    #[test]
+    fn should_still_count_other_transactions_from_an_excluded_ones_merchant() {
+        let excluded = tx("SAFEWAY", GROCERIES, oct(3), -80.0);
+        let transactions = [excluded.clone(), tx("SAFEWAY", GROCERIES, oct(9), -20.0)];
+
+        let plan = plan_for(&transactions, &excluding(PlanConfig::default(), &excluded));
+
+        assert_eq!(plan.other, 20.0);
+    }
+
+    #[test]
+    fn should_not_exclude_the_same_id_from_another_source() {
+        let excluded = tx("SAFEWAY", GROCERIES, oct(3), -80.0);
+        let mut elsewhere = excluded.clone();
+        elsewhere.transaction.source_id = "savings".into();
+
+        let config = excluding(PlanConfig::default(), &excluded);
+
+        assert!(!config.is_excluded(&elsewhere.transaction));
+    }
+
+    #[test]
+    fn should_not_exclude_another_id_from_the_same_source() {
+        let excluded = tx("SAFEWAY", GROCERIES, oct(3), -80.0);
+        let other = tx("SAFEWAY", GROCERIES, oct(9), -20.0);
+
+        let config = excluding(PlanConfig::default(), &excluded);
+
+        assert!(!config.is_excluded(&other.transaction));
+    }
+
+    #[test]
+    fn should_not_suggest_a_series_from_excluded_transactions() {
+        let history = monthly("NETFLIX", &[(-15.0, 12), (-15.0, 12)]);
+
+        let suggestions = suggest_series(&history, &excluding(PlanConfig::default(), &history[0]));
+
+        assert_eq!(suggestions, []);
     }
 
     fn status_of(month: YearMonth, due_day: u8, today: Date) -> PaymentStatus {

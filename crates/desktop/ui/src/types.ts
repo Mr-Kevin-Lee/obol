@@ -111,6 +111,7 @@ export interface ConnectStatus {
 //
 //   invoke<TransactionsView>('get_transactions', { month })
 //   invoke<TransactionsView>('set_merchant_category', { month, merchantKey, category })
+//   invoke<TransactionsView>('set_transaction_excluded', { month, sourceId, id, excluded })
 //   invoke<ImportResult>('import_simplifi', { contents })  // the picked file's text; categories only, additive; reload the view after
 //   invoke<SpendingPlanView>('get_spending_plan', { month, today })
 //   invoke<SpendingPlanView>('set_category_target', { month, today, category, target })  // target: number | null (null removes it)
@@ -134,6 +135,8 @@ export interface CategoryBar {
 export interface TransactionRow {
   /** Pays a bill confirmed in the Spending plan, so it isn't discretionary. */
   bill: boolean
+  /** Left out of every total, bar and the Spending plan, by hand. */
+  excluded: boolean
   source_id: string
   id: string
   posted: string
