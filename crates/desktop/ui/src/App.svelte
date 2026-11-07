@@ -15,6 +15,23 @@
   let screen = $state<Screen>('net-worth')
   // Shared by both budget screens, so switching between them keeps your place.
   let month = $state(currentMonth())
+
+  // Follows the system until you pick one; your pick is remembered.
+  type Theme = 'light' | 'dark'
+  const saved = localStorage.getItem('theme')
+  let picked = $state<Theme | null>(saved === 'light' || saved === 'dark' ? saved : null)
+  const systemDark = window.matchMedia('(prefers-color-scheme: dark)')
+  let system = $state<Theme>(systemDark.matches ? 'dark' : 'light')
+  systemDark.addEventListener('change', (e) => (system = e.matches ? 'dark' : 'light'))
+  const theme = $derived(picked ?? system)
+  $effect(() => {
+    document.documentElement.dataset.theme = theme
+  })
+
+  function toggleTheme() {
+    picked = theme === 'dark' ? 'light' : 'dark'
+    localStorage.setItem('theme', picked)
+  }
 </script>
 
 <main>
@@ -32,6 +49,15 @@
         </button>
       {/each}
     </nav>
+    <button
+      type="button"
+      class="secondary theme"
+      aria-label={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
+      title={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
+      onclick={toggleTheme}
+    >
+      <span aria-hidden="true">{theme === 'dark' ? '☀︎' : '☾'}</span>
+    </button>
   </header>
 
   <!-- Hidden rather than unmounted, so a refresh in flight survives a tab switch. -->
@@ -77,23 +103,26 @@
     --font-display: ui-serif, 'New York', 'Iowan Old Style', Georgia, serif;
     --font-mono: ui-monospace, 'SF Mono', Menlo, monospace;
 
-    color-scheme: light dark;
+    color-scheme: light;
   }
 
-  @media (prefers-color-scheme: dark) {
-    :global(:root) {
-      --positive: #2bb58c;
-      --negative: #f07a30;
-      --caution: #e69f00;
-      --link: #56b4e9;
+  /* Set by the theme toggle, which follows the system until you pick. An
+     attribute rather than light-dark(): the safari15 build target rewrites
+     that into a media query the toggle can't override. */
+  :global(:root[data-theme='dark']) {
+    --positive: #2bb58c;
+    --negative: #f07a30;
+    --caution: #e69f00;
+    --link: #56b4e9;
 
-      --bg: #1c1c1e;
-      --surface: #2c2c2e;
-      --border: #3a3a3c;
-      --track: #3a3a3c;
-      --text: #f5f5f7;
-      --text-muted: #a1a1a6;
-    }
+    --bg: #1c1c1e;
+    --surface: #2c2c2e;
+    --border: #3a3a3c;
+    --track: #3a3a3c;
+    --text: #f5f5f7;
+    --text-muted: #a1a1a6;
+
+    color-scheme: dark;
   }
 
   :global(body) {
@@ -257,6 +286,11 @@
   nav {
     display: flex;
     gap: 0.25rem;
+    margin-left: auto;
+  }
+
+  .theme {
+    padding: 0.3rem 0.6rem;
   }
 
   .tab {
