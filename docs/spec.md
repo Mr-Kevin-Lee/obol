@@ -1414,6 +1414,12 @@ exactly — the screenshots that prompted D44 reconcile to the cent.
 - **Left this month** = Income − Bills − Planned − Other.
 - **Per day** = Left ÷ the days remaining after today; current month only,
   omitted on its last day.
+- **Excluded transactions** — single transactions you leave out by hand,
+  stored in `plan.yaml` by source and provider id, for a one-off that no
+  category describes (moving savings to a brokerage, say). An excluded
+  transaction counts nowhere: not as income, spending, a series payment, or
+  toward a suggestion. The Transactions screen still lists it, dimmed, so it
+  can be counted again; its totals and bars leave it out too.
 
 Deliberately not in v0.6: savings goals, subcategories, carrying an
 overspend into the next month, and per-transaction category overrides (an

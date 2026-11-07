@@ -20,7 +20,7 @@ use std::sync::Mutex;
 use budget::{ImportResult, SpendingPlanView, TransactionsView};
 use connect::{ConnectAccount, ConnectPreview, ConnectStatus, LinkResult};
 use dashboard::{RefreshResult, StorageLayout};
-use obol_core::{parse_iso_date, Date, RecurringSeries, SeriesKind, YearMonth};
+use obol_core::{parse_iso_date, Date, RecurringSeries, SeriesKind, TransactionRef, YearMonth};
 use simplefin::SimpleFin;
 use view::DashboardView;
 
@@ -151,6 +151,22 @@ async fn get_transactions(month: String) -> Result<TransactionsView, String> {
 }
 
 #[tauri::command]
+async fn set_transaction_excluded(
+    lock: tauri::State<'_, WriteLock>,
+    month: String,
+    source_id: String,
+    id: String,
+    excluded: bool,
+) -> Result<TransactionsView, String> {
+    let (layout, month) = (storage_layout()?, parse_month(&month)?);
+    let transaction = TransactionRef { source_id, id };
+    locked(&lock, || {
+        budget::set_excluded(&layout, transaction, excluded)
+    })?;
+    budget::transactions_view(&layout, month)
+}
+
+#[tauri::command]
 async fn set_merchant_category(
     lock: tauri::State<'_, WriteLock>,
     month: String,
@@ -276,6 +292,7 @@ pub fn run() {
             load_earlier_transactions,
             get_transactions,
             set_merchant_category,
+            set_transaction_excluded,
             import_simplifi,
             get_spending_plan,
             set_category_target,
