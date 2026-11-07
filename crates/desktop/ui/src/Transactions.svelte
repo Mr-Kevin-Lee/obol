@@ -2,7 +2,8 @@
   import { invoke } from '@tauri-apps/api/core'
   import CategoryBars from './CategoryBars.svelte'
   import { insideApp, notInAppMessage } from './backend'
-  import { formatDate, formatMoney, formatMonth, formatSignedMoney } from './format'
+  import { localToday } from './calendar'
+  import { formatDate, formatMoney, formatMonth, formatOrdinal, formatSignedMoney } from './format'
   import type { EarlierResult, ImportResult, TransactionRow, TransactionsView } from './types'
 
   let { month }: { month: string } = $props()
@@ -78,6 +79,36 @@
       // The old view stays; put the picker back so it matches it.
       select.value = row.category
       if (request === latest) error = `Couldn't change the category for ${row.merchant_name}: ${e}`
+    } finally {
+      pending = null
+    }
+  }
+
+  // Marking confirms the merchant as a bill in the Spending plan, starting
+  // from this payment's amount and day; unmarking removes it from the plan.
+  // Either way every payment to the merchant follows, as in the plan.
+  async function toggleBill(row: TransactionRow) {
+    const request = latest
+    pending = row.merchant_key
+    error = null
+    const args = { month, today: localToday(), merchantKey: row.merchant_key }
+    try {
+      if (row.bill) {
+        await invoke('remove_series', args)
+      } else {
+        await invoke('confirm_series', {
+          ...args,
+          kind: 'bill',
+          expectedAmount: -row.amount,
+          dueDay: Number(row.posted.slice(8, 10)),
+        })
+      }
+      const result = await invoke<TransactionsView>('get_transactions', { month })
+      if (request === latest) view = result
+    } catch (e) {
+      if (request === latest) {
+        error = `Couldn't ${row.bill ? 'unmark' : 'mark'} ${row.merchant_name} as a bill: ${e}`
+      }
     } finally {
       pending = null
     }
@@ -249,6 +280,7 @@
             <th scope="col">Merchant</th>
             <th scope="col">Account</th>
             <th scope="col">Category</th>
+            <th scope="col"><span class="visually-hidden">Bill</span></th>
             <th scope="col" class="amount">Amount</th>
           </tr>
         </thead>
@@ -271,6 +303,23 @@
                 </select>
                 {#if pending === row.merchant_key}
                   <span class="saving" role="status">Saving…</span>
+                {/if}
+              </td>
+              <td>
+                {#if row.amount < 0 && !NOT_SPENDING.has(row.category)}
+                  <button
+                    type="button"
+                    class="bill"
+                    aria-pressed={row.bill}
+                    aria-label="Payments to {row.merchant_name} are a bill"
+                    title={row.bill
+                      ? `Payments to ${row.merchant_name} count as a bill; choose to remove it from the Spending plan`
+                      : `Add ${row.merchant_name} to the Spending plan as a bill of ${formatMoney(-row.amount)} due on the ${formatOrdinal(Number(row.posted.slice(8, 10)))}`}
+                    disabled={pending !== null}
+                    onclick={() => toggleBill(row)}
+                  >
+                    {row.bill ? '✓ Bill' : '+ Bill'}
+                  </button>
                 {/if}
               </td>
               <td class="amount" class:inflow={row.amount > 0}>
@@ -487,6 +536,35 @@
     margin-left: 0.375rem;
     font-size: 0.75rem;
     color: var(--text-muted);
+  }
+
+  /* Quiet until it's on, so a column of them doesn't shout. */
+  button.bill {
+    font-size: 0.75rem;
+    padding: 0.125rem 0.5rem;
+    white-space: nowrap;
+    color: var(--text-muted);
+    border-color: transparent;
+    background: none;
+  }
+
+  button.bill:hover:not(:disabled) {
+    border-color: var(--border);
+  }
+
+  button.bill[aria-pressed='true'] {
+    color: var(--blue);
+    border-color: var(--blue);
+    font-weight: 600;
+  }
+
+  .visually-hidden {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
   }
 
   .none {
