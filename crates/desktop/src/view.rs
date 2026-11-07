@@ -123,6 +123,18 @@ fn partition(records: &[AccountRecord]) -> (Vec<AccountView>, Vec<AccountView>) 
         }
     }
 
+    // Sources are fetched concurrently and recorded as they finish, so the
+    // snapshot's order changes run to run; a fixed order keeps rows still.
+    for group in [&mut assets, &mut liabilities] {
+        group.sort_by_cached_key(|a| {
+            (
+                a.institution.to_lowercase(),
+                a.account_type.clone(),
+                a.source_id.clone(),
+            )
+        });
+    }
+
     (assets, liabilities)
 }
 
@@ -243,6 +255,94 @@ mod tests {
                 .collect(),
         );
         assert_eq!(grouped, (vec!["chase"], vec!["apple"]));
+    }
+
+    fn account(source_id: &str, institution: &str, account_type: &str, category: &str) -> Value {
+        json!({
+            "account_key": format!("sha256:{source_id}"),
+            "source_id": source_id,
+            "institution": institution,
+            "category": category,
+            "type": account_type,
+            "balance": 100.0,
+            "currency": "USD",
+            "status": "ok",
+        })
+    }
+
+    fn asset_ids(view: &DashboardView) -> Vec<&str> {
+        view.assets.iter().map(|a| a.source_id.as_str()).collect()
+    }
+
+    #[test]
+    fn should_order_assets_by_institution_not_fetch_order() {
+        let view = build(
+            &snapshot_of(json!([
+                account("v", "Vanguard", "brokerage", "asset"),
+                account("a", "Ally", "savings", "asset"),
+                account("c", "Chase", "checking", "asset"),
+            ])),
+            None,
+        );
+
+        assert_eq!(asset_ids(&view), vec!["a", "c", "v"]);
+    }
+
+    #[test]
+    fn should_order_liabilities_by_institution_not_fetch_order() {
+        let view = build(
+            &snapshot_of(json!([
+                account("g", "Goldman Sachs", "credit_card", "liability"),
+                account("a", "American Express", "credit_card", "liability"),
+            ])),
+            None,
+        );
+
+        let ids: Vec<&str> = view
+            .liabilities
+            .iter()
+            .map(|a| a.source_id.as_str())
+            .collect();
+        assert_eq!(ids, vec!["a", "g"]);
+    }
+
+    #[test]
+    fn should_order_institutions_ignoring_case() {
+        let view = build(
+            &snapshot_of(json!([
+                account("c", "Chase", "checking", "asset"),
+                account("a", "ally", "savings", "asset"),
+            ])),
+            None,
+        );
+
+        assert_eq!(asset_ids(&view), vec!["a", "c"]);
+    }
+
+    #[test]
+    fn should_order_one_institution_by_account_type() {
+        let view = build(
+            &snapshot_of(json!([
+                account("a_savings", "Chase", "savings", "asset"),
+                account("z_checking", "Chase", "checking", "asset"),
+            ])),
+            None,
+        );
+
+        assert_eq!(asset_ids(&view), vec!["z_checking", "a_savings"]);
+    }
+
+    #[test]
+    fn should_order_identical_accounts_by_source_id() {
+        let view = build(
+            &snapshot_of(json!([
+                account("chase_2", "Chase", "checking", "asset"),
+                account("chase_1", "Chase", "checking", "asset"),
+            ])),
+            None,
+        );
+
+        assert_eq!(asset_ids(&view), vec!["chase_1", "chase_2"]);
     }
 
     #[test]
