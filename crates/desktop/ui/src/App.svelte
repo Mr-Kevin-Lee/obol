@@ -1,4 +1,5 @@
 <script lang="ts">
+  import Coin from './Coin.svelte'
   import Dashboard from './Dashboard.svelte'
   import MonthSelector from './MonthSelector.svelte'
   import SpendingPlan from './SpendingPlan.svelte'
@@ -15,6 +16,7 @@
   let screen = $state<Screen>('net-worth')
   // Shared by both budget screens, so switching between them keeps your place.
   let month = $state(currentMonth())
+  let refreshing = $state(false)
 
   // Follows the system until you pick one; your pick is remembered.
   type Theme = 'light' | 'dark'
@@ -36,7 +38,10 @@
 
 <main>
   <header class="top">
-    <h1>Obol</h1>
+    <div class="brand">
+      <Coin spinning={refreshing} />
+      <h1>Obol</h1>
+    </div>
     <nav aria-label="Screens">
       {#each screens as s (s.id)}
         <button
@@ -62,7 +67,7 @@
 
   <!-- Hidden rather than unmounted, so a refresh in flight survives a tab switch. -->
   <div hidden={screen !== 'net-worth'}>
-    <Dashboard />
+    <Dashboard bind:refreshing />
   </div>
 
   {#if screen !== 'net-worth'}
@@ -275,6 +280,12 @@
     gap: 1rem;
     padding-bottom: 1rem;
     border-bottom: 1px solid var(--border);
+  }
+
+  .brand {
+    display: flex;
+    align-items: center;
+    gap: 0.625rem;
   }
 
   h1 {

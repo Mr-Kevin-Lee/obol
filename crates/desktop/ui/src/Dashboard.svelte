@@ -8,9 +8,11 @@
   import { formatDateTime } from './format'
   import type { ConnectStatus, DashboardView, RefreshResult } from './types'
 
+  // Lets the header coin spin while a refresh runs.
+  let { refreshing = $bindable(false) }: { refreshing?: boolean } = $props()
+
   let view = $state<DashboardView | null>(null)
   let loading = $state(true)
-  let refreshing = $state(false)
   let error = $state<string | null>(null)
   let saveWarning = $state<string | null>(null)
   let syncWarning = $state<string | null>(null)
@@ -139,7 +141,7 @@
 {#if loading}
   <p class="placeholder">Loading…</p>
 {:else if view}
-  <NetWorthHeader netWorth={view.net_worth} delta={view.delta} />
+  <NetWorthHeader netWorth={view.net_worth} delta={view.delta} trend={view.trend} />
   <div class="groups">
     <AccountGroup title="Assets" subtotal={view.assets_subtotal} accounts={view.assets} />
     <AccountGroup
