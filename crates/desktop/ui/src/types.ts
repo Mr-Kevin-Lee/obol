@@ -34,8 +34,14 @@ export interface DashboardView {
   assets_subtotal: number
   liabilities_subtotal: number
   delta: DeltaView | null
-  /** Net worth per saved snapshot, oldest first (the sparkline). */
-  trend: number[]
+  /** Net worth per saved snapshot over the last year, oldest first. */
+  trend: TrendPoint[]
+}
+
+export interface TrendPoint {
+  /** YYYY-MM-DD */
+  date: string
+  value: number
 }
 
 export interface RefreshResult {

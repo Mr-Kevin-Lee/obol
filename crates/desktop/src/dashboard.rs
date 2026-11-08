@@ -90,8 +90,9 @@ pub fn load_dashboard(layout: &StorageLayout) -> Result<Option<DashboardView>, S
     }))
 }
 
-/// How many snapshots the net worth sparkline draws.
-const TREND_SNAPSHOTS: usize = 30;
+/// How many snapshots the net worth chart reads: a year of daily ones, with
+/// room to spare. The chart itself keeps only the last year's worth.
+const TREND_SNAPSHOTS: usize = 400;
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct RefreshResult {
@@ -284,7 +285,31 @@ mod tests {
 
         let view = load_dashboard(&layout).unwrap().unwrap();
 
-        assert_eq!(view.trend, vec![100.0, 250.0]);
+        let points: Vec<(&str, f64)> = view
+            .trend
+            .iter()
+            .map(|p| (p.date.as_str(), p.value))
+            .collect();
+        assert_eq!(points, vec![("2026-10-12", 100.0), ("2026-10-19", 250.0)]);
+    }
+
+    #[test]
+    fn should_read_a_trend_from_more_than_a_month_of_daily_snapshots() {
+        let root = temp_root("trend-long");
+        let layout = StorageLayout::under(&root);
+        let first = time::Date::from_calendar_date(2026, time::Month::January, 1).unwrap();
+        for i in 0..60 {
+            save_snapshot_aged(
+                &layout.snapshots,
+                &format!("{}T09:00:00Z", first + time::Duration::days(i)),
+                100.0 + i as f64,
+                Duration::from_secs((60 - i as u64) * 3600),
+            );
+        }
+
+        let view = load_dashboard(&layout).unwrap().unwrap();
+
+        assert_eq!(view.trend.len(), 60);
     }
 
     // --- labels ---
@@ -532,9 +557,11 @@ mod tests {
     async fn should_end_the_refresh_trend_with_the_just_fetched_balance() {
         let layout = StorageLayout::under(&temp_root("refresh-trend"));
         write_fixed_source(&layout);
+        // Relative to today, so it stays inside the trend's one-year window.
+        let yesterday = time::OffsetDateTime::now_utc().date() - time::Duration::days(1);
         save_snapshot_aged(
             &layout.snapshots,
-            "2026-01-01T09:00:00Z",
+            &format!("{yesterday}T09:00:00Z"),
             400.0,
             Duration::from_secs(7200),
         );
@@ -543,7 +570,8 @@ mod tests {
             .await
             .unwrap();
 
-        assert_eq!(result.view.trend, vec![400.0, 500.0]);
+        let values: Vec<f64> = result.view.trend.iter().map(|p| p.value).collect();
+        assert_eq!(values, vec![400.0, 500.0]);
     }
 
     #[tokio::test]

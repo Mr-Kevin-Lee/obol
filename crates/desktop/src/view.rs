@@ -13,7 +13,8 @@
 //! groups and maps.
 
 use obol_core::{
-    calculate_net_worth_from_records, AccountRecord, Category, NetWorth, Snapshot, Status,
+    calculate_net_worth_from_records, parse_iso_date, AccountRecord, Category, NetWorth, Snapshot,
+    Status,
 };
 use serde::Serialize;
 use std::collections::BTreeMap;
@@ -37,7 +38,15 @@ pub struct DashboardView {
     /// Net worth per saved snapshot, oldest first, for the sparkline.
     /// Filled in by the dashboard loaders, which hold the history;
     /// [`build`] sees only two snapshots and leaves it empty.
-    pub trend: Vec<f64>,
+    pub trend: Vec<TrendPoint>,
+}
+
+/// One snapshot's net worth on the day it was taken.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct TrendPoint {
+    /// `YYYY-MM-DD`, as recorded in the snapshot.
+    pub date: String,
+    pub value: f64,
 }
 
 /// Internally tagged so the frontend branches on `kind` rather than on
@@ -135,16 +144,41 @@ fn sort_accounts(group: &mut [AccountView]) {
 /// Net worth of each snapshot, oldest first. A snapshot whose net worth
 /// can't be computed (every source failed) is skipped rather than drawn
 /// as a drop to zero, the same rule [`delta`] applies.
-pub fn trend<'a>(newest_first: impl DoubleEndedIterator<Item = &'a Snapshot>) -> Vec<f64> {
-    newest_first
+///
+/// Covers the year ending at the newest snapshot, not at today's date, so
+/// a long gap between refreshes doesn't empty the chart.
+pub fn trend<'a>(newest_first: impl Iterator<Item = &'a Snapshot>) -> Vec<TrendPoint> {
+    let snapshots: Vec<&Snapshot> = newest_first.collect();
+    let Some(newest) = snapshots.first().and_then(|s| snapshot_day(s)) else {
+        return Vec::new();
+    };
+    let cutoff = newest - time::Duration::days(TREND_DAYS);
+
+    snapshots
+        .iter()
         .rev()
-        .filter_map(
-            |snapshot| match calculate_net_worth_from_records(&snapshot.accounts) {
-                NetWorth::Computed(value) => Some(value),
+        .filter_map(|snapshot| {
+            let day = snapshot_day(snapshot)?;
+            if day < cutoff {
+                return None;
+            }
+            match calculate_net_worth_from_records(&snapshot.accounts) {
+                NetWorth::Computed(value) => Some(TrendPoint {
+                    date: day.to_string(),
+                    value,
+                }),
                 NetWorth::Unavailable { .. } => None,
-            },
-        )
+            }
+        })
         .collect()
+}
+
+/// How far back the net worth chart reaches.
+const TREND_DAYS: i64 = 365;
+
+/// The calendar day a snapshot was taken, as recorded in its timestamp.
+fn snapshot_day(snapshot: &Snapshot) -> Option<time::Date> {
+    parse_iso_date(snapshot.created_at.get(..10)?)
 }
 
 impl From<NetWorth> for NetWorthView {
@@ -322,7 +356,48 @@ mod tests {
 
         assert_eq!(
             trend([&newest, &older, &oldest].into_iter()),
-            vec![100.0, 200.0, 300.0]
+            vec![
+                point("2026-10-12", 100.0),
+                point("2026-10-19", 200.0),
+                point("2026-10-26", 300.0),
+            ]
+        );
+    }
+
+    fn point(date: &str, value: f64) -> TrendPoint {
+        TrendPoint {
+            date: date.to_string(),
+            value,
+        }
+    }
+
+    #[test]
+    fn should_keep_a_snapshot_exactly_a_year_before_the_newest() {
+        let newest = snap("2026-10-26T09:00:00-07:00", 300.0);
+        let edge = snap("2025-10-26T09:00:00-07:00", 100.0);
+
+        assert_eq!(trend([&newest, &edge].into_iter()).len(), 2);
+    }
+
+    #[test]
+    fn should_drop_a_snapshot_more_than_a_year_before_the_newest() {
+        let newest = snap("2026-10-26T09:00:00-07:00", 300.0);
+        let too_old = snap("2025-10-25T09:00:00-07:00", 100.0);
+
+        assert_eq!(
+            trend([&newest, &too_old].into_iter()),
+            vec![point("2026-10-26", 300.0)]
+        );
+    }
+
+    #[test]
+    fn should_skip_a_snapshot_whose_date_cannot_be_read() {
+        let newest = snap("2026-10-26T09:00:00-07:00", 300.0);
+        let garbled = snap("sometime last week", 100.0);
+
+        assert_eq!(
+            trend([&newest, &garbled].into_iter()),
+            vec![point("2026-10-26", 300.0)]
         );
     }
 
@@ -335,12 +410,15 @@ mod tests {
         }]));
         let good = snap(EARLIER, 100.0);
 
-        assert_eq!(trend([&failed, &good].into_iter()), vec![100.0]);
+        assert_eq!(
+            trend([&failed, &good].into_iter()),
+            vec![point("2026-10-19", 100.0)]
+        );
     }
 
     #[test]
     fn should_have_an_empty_trend_without_snapshots() {
-        assert_eq!(trend(std::iter::empty()), Vec::<f64>::new());
+        assert_eq!(trend(std::iter::empty()), Vec::<TrendPoint>::new());
     }
 
     fn labelled(accounts: Value, labels: &[(&str, &str)]) -> DashboardView {
