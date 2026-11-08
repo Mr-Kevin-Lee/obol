@@ -1,5 +1,5 @@
 <script lang="ts">
-  import type { DeltaView, NetWorthView } from './types'
+  import type { DeltaView, NetWorthView, TrendPoint } from './types'
   import { formatDate, formatMoney, formatSignedMoney } from './format'
 
   import Sparkline from './Sparkline.svelte'
@@ -8,7 +8,7 @@
     netWorth,
     delta,
     trend,
-  }: { netWorth: NetWorthView; delta: DeltaView | null; trend: number[] } = $props()
+  }: { netWorth: NetWorthView; delta: DeltaView | null; trend: TrendPoint[] } = $props()
 
   // Direction is carried by an arrow and a sign as well as by colour
   // (FR9, FR27), so it reads correctly under any colour vision.
@@ -33,7 +33,7 @@
         {/if}
       </p>
     {/if}
-    <Sparkline values={trend} />
+    <Sparkline points={trend} />
   {:else if netWorth.total_sources === 0}
     <!-- Not the same thing as every source failing: there's nothing
          configured to have failed. -->
