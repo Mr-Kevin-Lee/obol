@@ -165,7 +165,7 @@ pub fn trend<'a>(newest_first: impl Iterator<Item = &'a Snapshot>) -> Vec<TrendP
             match calculate_net_worth_from_records(&snapshot.accounts) {
                 NetWorth::Computed(value) => Some(TrendPoint {
                     date: day.to_string(),
-                    value,
+                    value: to_cents(value),
                 }),
                 NetWorth::Unavailable { .. } => None,
             }
@@ -241,6 +241,14 @@ fn account_view(record: &AccountRecord) -> AccountView {
     }
 }
 
+/// Rounds to the cent. Accounts are saved in whatever order their fetches
+/// finish, so the same balances can sum to totals that differ in the 15th
+/// decimal; unrounded, that reads as "−$0.00 since" and draws a slope.
+/// The `+ 0.0` turns a rounded -0.0 into plain zero.
+fn to_cents(amount: f64) -> f64 {
+    (amount * 100.0).round() / 100.0 + 0.0
+}
+
 fn delta(current: NetWorth, previous: Option<&Snapshot>) -> Option<DeltaView> {
     let previous = previous?;
 
@@ -254,7 +262,7 @@ fn delta(current: NetWorth, previous: Option<&Snapshot>) -> Option<DeltaView> {
     };
 
     Some(DeltaView {
-        amount: current - before,
+        amount: to_cents(current - before),
         since: previous.created_at.clone(),
     })
 }
@@ -342,6 +350,71 @@ mod tests {
             "currency": "USD",
             "status": "ok",
         })
+    }
+
+    /// One asset per balance, in the order given. Summed in that order,
+    /// `[0.1, 0.2, 0.3]` and `[0.3, 0.2, 0.1]` differ by about 1e-16.
+    fn assets_in_order(created_at: &str, balances: &[f64]) -> Snapshot {
+        let accounts: Vec<Value> = balances
+            .iter()
+            .enumerate()
+            .map(|(i, balance)| asset(&format!("a{i}"), *balance))
+            .collect();
+        snapshot_at(created_at, json!(accounts))
+    }
+
+    #[test]
+    fn should_report_no_change_when_only_the_sum_order_differs() {
+        let now = assets_in_order(NOW, &[0.1, 0.2, 0.3]);
+        let before = assets_in_order(EARLIER, &[0.3, 0.2, 0.1]);
+
+        let delta = build(&now, Some(&before)).delta.unwrap();
+
+        assert_eq!(delta.amount, 0.0);
+    }
+
+    #[test]
+    fn should_report_a_zero_change_as_positive_zero() {
+        // Noise of about -1e-16: the "−$0.00 since" case.
+        let now = assets_in_order(NOW, &[0.3, 0.2, 0.1]);
+        let before = assets_in_order(EARLIER, &[0.1, 0.2, 0.3]);
+
+        let delta = build(&now, Some(&before)).delta.unwrap();
+
+        assert!(delta.amount.is_sign_positive());
+    }
+
+    #[test]
+    fn should_round_a_change_to_the_cent() {
+        let now = assets_in_order(NOW, &[1000.004]);
+        let before = assets_in_order(EARLIER, &[1000.0]);
+
+        let delta = build(&now, Some(&before)).delta.unwrap();
+
+        assert_eq!(delta.amount, 0.0);
+    }
+
+    #[test]
+    fn should_keep_a_real_change_to_the_cent() {
+        let now = assets_in_order(NOW, &[1000.12]);
+        let before = assets_in_order(EARLIER, &[1000.0]);
+
+        let delta = build(&now, Some(&before)).delta.unwrap();
+
+        assert_eq!(delta.amount, 0.12);
+    }
+
+    #[test]
+    fn should_draw_equal_balances_as_equal_trend_values() {
+        let older = assets_in_order(EARLIER, &[0.3, 0.2, 0.1]);
+        let newer = assets_in_order(NOW, &[0.1, 0.2, 0.3]);
+
+        let values: Vec<f64> = trend([&newer, &older].into_iter())
+            .iter()
+            .map(|p| p.value)
+            .collect();
+
+        assert_eq!(values[0], values[1]);
     }
 
     fn snap(created_at: &str, balance: f64) -> Snapshot {
