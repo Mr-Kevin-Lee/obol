@@ -21,6 +21,7 @@ use obol_core::{
 use serde::Serialize;
 
 use crate::dashboard::StorageLayout;
+use crate::notes::{note_for, read_notes, TransactionNotes};
 
 /// How much history series suggestions look at: the viewed month and the
 /// eleven before it.
@@ -43,6 +44,8 @@ pub struct TransactionRow {
     /// Its category has a target in the Spending plan, so it's planned
     /// spending rather than discretionary.
     pub has_target: bool,
+    /// Your own note on this transaction, if you've written one.
+    pub note: Option<String>,
     /// Left out of every total, bar and the Spending plan, by hand.
     pub excluded: bool,
     pub source_id: String,
@@ -158,6 +161,8 @@ pub fn transactions_view(
         .collect();
     let labels = account_labels(layout);
     let plan = read_plan(layout)?;
+    // A broken notes file only costs the notes, not the transactions.
+    let notes = read_notes(layout).unwrap_or_default();
 
     let counted: Vec<&CategorizedTransaction> = in_month
         .iter()
@@ -178,7 +183,7 @@ pub fn transactions_view(
         discretionary_categories,
         transactions: in_month
             .iter()
-            .map(|transaction| transaction_row(transaction, &labels, &plan))
+            .map(|transaction| transaction_row(transaction, &labels, &plan, &notes))
             .collect(),
         uncategorized_count: in_month
             .iter()
@@ -553,11 +558,13 @@ fn transaction_row(
     transaction: &CategorizedTransaction,
     labels: &HashMap<String, String>,
     plan: &PlanConfig,
+    notes: &TransactionNotes,
 ) -> TransactionRow {
     let source_id = &transaction.transaction.source_id;
     TransactionRow {
         bill: is_bill_payment(plan, transaction),
         has_target: has_target(plan, transaction),
+        note: note_for(notes, source_id, &transaction.transaction.id),
         excluded: plan.is_excluded(&transaction.transaction),
         source_id: source_id.clone(),
         id: transaction.transaction.id.clone(),
@@ -1593,6 +1600,49 @@ mod tests {
         let view = transactions_view(&layout, october()).unwrap();
 
         assert!(!row_for(&view, "AMAZON").has_target);
+    }
+
+    #[test]
+    fn should_show_a_saved_note_on_its_row() {
+        let layout = shopping_and_targeted_groceries("note-shown");
+        crate::notes::set_note(&layout, "card", "a", "Birthday gift").unwrap();
+
+        let view = transactions_view(&layout, october()).unwrap();
+
+        assert_eq!(
+            row_for(&view, "AMAZON").note.as_deref(),
+            Some("Birthday gift")
+        );
+    }
+
+    #[test]
+    fn should_leave_other_rows_without_a_note() {
+        let layout = shopping_and_targeted_groceries("note-others");
+        crate::notes::set_note(&layout, "card", "a", "Birthday gift").unwrap();
+
+        let view = transactions_view(&layout, october()).unwrap();
+
+        assert_eq!(row_for(&view, "SAFEWAY").note, None);
+    }
+
+    #[test]
+    fn should_not_show_a_note_on_the_same_id_from_another_source() {
+        let layout = shopping_and_targeted_groceries("note-source");
+        crate::notes::set_note(&layout, "checking", "a", "Not this one").unwrap();
+
+        let view = transactions_view(&layout, october()).unwrap();
+
+        assert_eq!(row_for(&view, "AMAZON").note, None);
+    }
+
+    #[test]
+    fn should_still_show_transactions_when_the_notes_file_is_malformed() {
+        let layout = shopping_and_targeted_groceries("note-malformed");
+        fs::write(&layout.transaction_notes, "not json").unwrap();
+
+        let view = transactions_view(&layout, october()).unwrap();
+
+        assert_eq!(view.transactions.len(), 2);
     }
 
     #[test]
