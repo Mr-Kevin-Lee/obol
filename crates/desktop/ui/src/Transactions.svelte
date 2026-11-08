@@ -26,10 +26,20 @@
   // Spending that isn't a bill confirmed in the Spending plan. Combines
   // with the category filter.
   let discretionaryOnly = $state(false)
+  // Categories counted as discretionary even though they hold bills or have
+  // a target: Dining and Drinks stays in while the rent bill stays out.
+  let addedBack = $state<string[]>([])
 
   function clearFilters() {
     categoryFilter = null
     discretionaryOnly = false
+    addedBack = []
+  }
+
+  function toggleAddedBack(category: string) {
+    addedBack = addedBack.includes(category)
+      ? addedBack.filter((c) => c !== category)
+      : [...addedBack, category]
   }
 
   // Choosing the category already shown clears the filter.
@@ -235,7 +245,9 @@
       (t) =>
         (categoryFilter === null || t.category === categoryFilter) &&
         (!discretionaryOnly ||
-          (!t.bill && !t.has_target && !t.excluded && !NOT_SPENDING.has(t.category))),
+          (((!t.bill && !t.has_target) || addedBack.includes(t.category)) &&
+            !t.excluded &&
+            !NOT_SPENDING.has(t.category))),
     ),
   )
   // The view arrives newest first. Amount sorts on the signed value, so
@@ -259,9 +271,24 @@
     sort.key === key ? (sort.ascending ? 'ascending' : 'descending') : undefined
 
   const filtering = $derived(categoryFilter !== null || discretionaryOnly)
-  const bars = $derived(
-    (discretionaryOnly ? view?.discretionary_categories : view?.categories) ?? [],
+  const addedBackBars = $derived(
+    (view?.left_out_categories ?? []).filter((b) => addedBack.includes(b.category)),
   )
+  const discretionaryTotal = $derived(
+    (view?.discretionary_spent_total ?? 0) + addedBackBars.reduce((sum, b) => sum + b.spent, 0),
+  )
+  // A category added back sums its left-out share with any discretionary one.
+  const discretionaryBars = $derived.by(() => {
+    const spent = new Map<string, number>()
+    for (const b of [...(view?.discretionary_categories ?? []), ...addedBackBars]) {
+      spent.set(b.category, (spent.get(b.category) ?? 0) + b.spent)
+    }
+    const total = [...spent.values()].reduce((sum, s) => sum + s, 0)
+    return [...spent]
+      .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+      .map(([category, s]) => ({ category, spent: s, percentage: (s / total) * 100 }))
+  })
+  const bars = $derived((discretionaryOnly ? discretionaryBars : view?.categories) ?? [])
   // Net spending of the rows shown, counted the way Spent is: refunds
   // reduce it; transfers, income and excluded rows don't count.
   const shownSpent = $derived(
@@ -294,12 +321,27 @@
 {:else if view}
   <section class="spent" aria-labelledby="spent-heading">
     <h2 id="spent-heading" class="eyebrow">{discretionaryOnly ? 'Discretionary spending' : 'Spent'}</h2>
-    <p class="figure">{formatMoney(discretionaryOnly ? view.discretionary_spent_total : view.spent_total)}</p>
+    <p class="figure">{formatMoney(discretionaryOnly ? discretionaryTotal : view.spent_total)}</p>
     {#if discretionaryOnly}
       <p class="note">
         Leaves out bills and categories with a target in the Spending plan, which are already
-        planned for.
+        planned for. Add a category back to count it.
       </p>
+      {#if view.left_out_categories.length > 0}
+        <div class="add-back" role="group" aria-label="Add a left-out category back">
+          {#each view.left_out_categories as bar (bar.category)}
+            <button
+              type="button"
+              class="secondary"
+              aria-pressed={addedBack.includes(bar.category)}
+              onclick={() => toggleAddedBack(bar.category)}
+            >
+              <span aria-hidden="true">{addedBack.includes(bar.category) ? '☑' : '☐'}</span>
+              {bar.category} ({formatMoney(bar.spent)})
+            </button>
+          {/each}
+        </div>
+      {/if}
     {/if}
   </section>
 
@@ -614,7 +656,8 @@
     font-weight: 600;
   }
 
-  .filters {
+  .filters,
+  .add-back {
     display: flex;
     flex-wrap: wrap;
     align-items: center;
@@ -664,6 +707,10 @@
     margin: 0.25rem 0 0;
     font-size: 0.8125rem;
     color: var(--negative);
+  }
+
+  .add-back {
+    margin-top: 0.5rem;
   }
 
   .note {

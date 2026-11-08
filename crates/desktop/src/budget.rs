@@ -75,6 +75,10 @@ pub struct TransactionsView {
     pub discretionary_spent_total: f64,
     /// `categories` without bills or targeted categories.
     pub discretionary_categories: Vec<CategoryBar>,
+    /// What discretionary leaves out (bill payments and targeted
+    /// categories), by category, so the screen can add any of it back.
+    /// Adding a category back sums its bar here with its discretionary one.
+    pub left_out_categories: Vec<CategoryBar>,
     /// Newest first.
     pub transactions: Vec<TransactionRow>,
     pub uncategorized_count: usize,
@@ -170,10 +174,21 @@ pub fn transactions_view(
         .filter(|transaction| !plan.is_excluded(&transaction.transaction))
         .collect();
     let (spent_total, categories) = spending(counted.iter().copied());
-    let (discretionary_spent_total, discretionary_categories) =
-        spending(counted.iter().copied().filter(|transaction| {
-            !is_bill_payment(&plan, transaction) && !has_target(&plan, transaction)
-        }));
+    let planned = |transaction: &CategorizedTransaction| {
+        is_bill_payment(&plan, transaction) || has_target(&plan, transaction)
+    };
+    let (discretionary_spent_total, discretionary_categories) = spending(
+        counted
+            .iter()
+            .copied()
+            .filter(|transaction| !planned(transaction)),
+    );
+    let (_, left_out_categories) = spending(
+        counted
+            .iter()
+            .copied()
+            .filter(|transaction| planned(transaction)),
+    );
 
     Ok(TransactionsView {
         month: month.to_string(),
@@ -181,6 +196,7 @@ pub fn transactions_view(
         categories,
         discretionary_spent_total,
         discretionary_categories,
+        left_out_categories,
         transactions: in_month
             .iter()
             .map(|transaction| transaction_row(transaction, &labels, &plan, &notes))
@@ -1552,6 +1568,52 @@ mod tests {
         let view = transactions_view(&layout, october()).unwrap();
 
         assert_eq!(view.discretionary_spent_total, 50.0);
+    }
+
+    #[test]
+    fn should_list_bill_payments_as_left_out_of_discretionary() {
+        let layout = bill_and_shopping("left-out-bill");
+
+        let view = transactions_view(&layout, october()).unwrap();
+
+        assert_eq!(
+            view.left_out_categories,
+            [CategoryBar {
+                category: "Entertainment".into(),
+                spent: 15.5,
+                percentage: 100.0
+            }]
+        );
+    }
+
+    #[test]
+    fn should_list_targeted_categories_as_left_out_of_discretionary() {
+        let layout = shopping_and_targeted_groceries("left-out-target");
+
+        let view = transactions_view(&layout, october()).unwrap();
+
+        let names: Vec<&str> = view
+            .left_out_categories
+            .iter()
+            .map(|bar| bar.category.as_str())
+            .collect();
+        assert_eq!(names, ["Groceries"]);
+    }
+
+    #[test]
+    fn should_split_a_category_between_discretionary_and_left_out() {
+        let layout = bill_and_shopping("left-out-split");
+        write_rules(&layout, &[("NETFLIX", "Shopping"), ("AMAZON", "Shopping")]);
+
+        let view = transactions_view(&layout, october()).unwrap();
+
+        assert_eq!(
+            (
+                view.discretionary_categories[0].spent,
+                view.left_out_categories[0].spent
+            ),
+            (50.0, 15.5)
+        );
     }
 
     #[test]
