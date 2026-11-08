@@ -250,6 +250,12 @@
   <section class="spent" aria-labelledby="spent-heading">
     <h2 id="spent-heading" class="eyebrow">{discretionaryOnly ? 'Discretionary spending' : 'Spent'}</h2>
     <p class="figure">{formatMoney(discretionaryOnly ? view.discretionary_spent_total : view.spent_total)}</p>
+    {#if discretionaryOnly}
+      <p class="note">
+        Leaves out bills and categories with a target in the Spending plan, which are already
+        planned for.
+      </p>
+    {/if}
   </section>
 
   {#if bars.length > 0}
@@ -293,7 +299,7 @@
           type="button"
           class="secondary"
           aria-pressed={discretionaryOnly}
-          title="Hides bills confirmed in the Spending plan, transfers and income"
+          title="Hides bills, categories with a target in the Spending plan, transfers and income"
           onclick={() => (discretionaryOnly = !discretionaryOnly)}
         >
           <span aria-hidden="true">{discretionaryOnly ? '☑' : '☐'}</span>
@@ -531,6 +537,13 @@
     display: flex;
     align-items: center;
     gap: 0.5rem;
+    font-size: 0.8125rem;
+    color: var(--text-muted);
+  }
+
+  .note {
+    margin: 0.5rem 0 0;
+    max-width: 40rem;
     font-size: 0.8125rem;
     color: var(--text-muted);
   }
