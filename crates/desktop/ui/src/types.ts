@@ -147,6 +147,8 @@ export interface TransactionRow {
   bill: boolean
   /** Its category has a target in the Spending plan: planned, not discretionary. */
   has_target: boolean
+  /** Your own note on this transaction; null when there is none. */
+  note: string | null
   /** Left out of every total, bar and the Spending plan, by hand. */
   excluded: boolean
   source_id: string

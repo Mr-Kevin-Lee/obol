@@ -136,6 +136,51 @@
     }
   }
 
+  // A short note on one transaction. The backend enforces the limit; this
+  // only keeps the box from taking more.
+  const maxNote = 200
+  const keyOf = (row: TransactionRow) => `${row.source_id}:${row.id}`
+  let noteEditing = $state<string | null>(null)
+  let noteDraft = $state('')
+  let noteSaving = $state(false)
+  let noteError = $state<string | null>(null)
+  let noteInput = $state<HTMLInputElement | null>(null)
+
+  $effect(() => {
+    noteInput?.focus()
+  })
+
+  function startNote(row: TransactionRow) {
+    noteEditing = keyOf(row)
+    noteDraft = row.note ?? ''
+    noteError = null
+  }
+
+  async function saveNote(row: TransactionRow) {
+    const request = latest
+    noteSaving = true
+    noteError = null
+    try {
+      const result = await invoke<TransactionsView>('set_transaction_note', {
+        month,
+        sourceId: row.source_id,
+        id: row.id,
+        note: noteDraft,
+      })
+      if (request === latest) view = result
+      noteEditing = null
+    } catch (e) {
+      noteError = `Couldn't save the note: ${e}`
+    } finally {
+      noteSaving = false
+    }
+  }
+
+  function noteKeydown(event: KeyboardEvent, row: TransactionRow) {
+    if (event.key === 'Enter') saveNote(row)
+    else if (event.key === 'Escape') noteEditing = null
+  }
+
   let fileInput = $state<HTMLInputElement | null>(null)
   let importing = $state(false)
   let imported = $state<string | null>(null)
@@ -347,7 +392,39 @@
           {#each sorted as row (`${row.source_id}:${row.id}`)}
             <tr class:excluded={row.excluded}>
               <td class="date">{formatDate(row.posted)}</td>
-              <td>{row.merchant_name}</td>
+              <td class="merchant">
+                {row.merchant_name}
+                {#if noteEditing === keyOf(row)}
+                  <div class="note-edit">
+                    <input
+                      bind:this={noteInput}
+                      bind:value={noteDraft}
+                      maxlength={maxNote}
+                      placeholder="What was this?"
+                      aria-label="Note for this {row.merchant_name} transaction"
+                      disabled={noteSaving}
+                      onkeydown={(e) => noteKeydown(e, row)}
+                    />
+                    <span class="count" aria-hidden="true">{noteDraft.length}/{maxNote}</span>
+                    <button type="button" onclick={() => saveNote(row)} disabled={noteSaving}>
+                      Save
+                    </button>
+                    <button
+                      type="button"
+                      class="secondary"
+                      onclick={() => (noteEditing = null)}
+                      disabled={noteSaving}
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                  {#if noteError}
+                    <p class="note-error" role="alert">{noteError}</p>
+                  {/if}
+                {:else if row.note}
+                  <p class="row-note">{row.note}</p>
+                {/if}
+              </td>
               <td class="muted">{row.account_label}</td>
               <td>
                 <select
@@ -365,6 +442,17 @@
                 {/if}
               </td>
               <td class="actions">
+                <button
+                  type="button"
+                  class="toggle"
+                  aria-label={row.note
+                    ? `Edit the note on this ${row.merchant_name} transaction`
+                    : `Add a note to this ${row.merchant_name} transaction`}
+                  disabled={noteEditing === keyOf(row)}
+                  onclick={() => startNote(row)}
+                >
+                  {row.note ? 'Edit note' : '+ Note'}
+                </button>
                 {#if row.amount < 0 && !row.excluded && !NOT_SPENDING.has(row.category)}
                   <button
                     type="button"
@@ -541,6 +629,43 @@
     color: var(--text-muted);
   }
 
+  .row-note {
+    margin: 0.125rem 0 0;
+    max-width: 22rem;
+    font-size: 0.8125rem;
+    color: var(--text-muted);
+    overflow-wrap: anywhere;
+  }
+
+  .note-edit {
+    display: flex;
+    gap: 0.375rem;
+    align-items: center;
+    margin-top: 0.25rem;
+  }
+
+  .note-edit input {
+    min-width: 8rem;
+    flex: 1;
+  }
+
+  .note-edit button {
+    padding: 0.2rem 0.6rem;
+    font-size: 0.8125rem;
+  }
+
+  .count {
+    font-size: 0.75rem;
+    color: var(--text-muted);
+    font-variant-numeric: tabular-nums;
+  }
+
+  .note-error {
+    margin: 0.25rem 0 0;
+    font-size: 0.8125rem;
+    color: var(--negative);
+  }
+
   .note {
     margin: 0.5rem 0 0;
     max-width: 40rem;
@@ -658,8 +783,9 @@
     font-weight: 600;
   }
 
+  /* Each button stays whole, but the row of them may wrap when space is tight. */
   .actions {
-    white-space: nowrap;
+    min-width: 8rem;
   }
 
   /* Still listed so it can be counted again, but visibly out of the sums. */

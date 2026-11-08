@@ -29,6 +29,8 @@ pub struct StorageLayout {
     pub simplefin_sync: PathBuf,
     /// Your names for accounts, keyed by source id (desktop only).
     pub account_labels: PathBuf,
+    /// Your notes on single transactions (desktop only).
+    pub transaction_notes: PathBuf,
     /// D44: one `YYYY-MM.json` per month (§11.4).
     pub transactions: PathBuf,
     /// D44: merchant key → category (§11.4).
@@ -47,6 +49,7 @@ impl StorageLayout {
             simplefin_ignored: root.join("simplefin_ignored.json"),
             simplefin_sync: root.join("simplefin_sync.json"),
             account_labels: root.join("account_labels.json"),
+            transaction_notes: root.join("transaction_notes.json"),
             transactions: root.join("transactions"),
             merchant_rules: root.join("merchant_rules.yaml"),
             plan: root.join("plan.yaml"),
@@ -423,6 +426,7 @@ mod tests {
                 simplefin_ignored: "/root/simplefin_ignored.json".into(),
                 simplefin_sync: "/root/simplefin_sync.json".into(),
                 account_labels: "/root/account_labels.json".into(),
+                transaction_notes: "/root/transaction_notes.json".into(),
                 transactions: "/root/transactions".into(),
                 merchant_rules: "/root/merchant_rules.yaml".into(),
                 plan: "/root/plan.yaml".into(),

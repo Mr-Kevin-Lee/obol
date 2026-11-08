@@ -9,6 +9,7 @@ pub mod budget;
 pub mod connect;
 pub mod dashboard;
 pub mod labels;
+pub mod notes;
 pub mod simplefin;
 pub mod sync;
 pub mod view;
@@ -180,6 +181,20 @@ async fn set_transaction_excluded(
     budget::transactions_view(&layout, month)
 }
 
+/// Writes (or, with a blank note, clears) the note on one transaction.
+#[tauri::command]
+async fn set_transaction_note(
+    lock: tauri::State<'_, WriteLock>,
+    month: String,
+    source_id: String,
+    id: String,
+    note: String,
+) -> Result<TransactionsView, String> {
+    let (layout, month) = (storage_layout()?, parse_month(&month)?);
+    locked(&lock, || notes::set_note(&layout, &source_id, &id, &note))?;
+    budget::transactions_view(&layout, month)
+}
+
 #[tauri::command]
 async fn set_merchant_category(
     lock: tauri::State<'_, WriteLock>,
@@ -308,6 +323,7 @@ pub fn run() {
             set_merchant_category,
             set_account_label,
             set_transaction_excluded,
+            set_transaction_note,
             import_simplifi,
             get_spending_plan,
             set_category_target,
