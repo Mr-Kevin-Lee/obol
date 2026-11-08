@@ -8,6 +8,7 @@ pub mod auto_link;
 pub mod budget;
 pub mod connect;
 pub mod dashboard;
+pub mod labels;
 pub mod simplefin;
 pub mod sync;
 pub mod view;
@@ -148,6 +149,19 @@ async fn link_simplefin_accounts(
 #[tauri::command]
 async fn get_transactions(month: String) -> Result<TransactionsView, String> {
     budget::transactions_view(&storage_layout()?, parse_month(&month)?)
+}
+
+/// Names (or, with a blank label, un-names) one account, and returns the
+/// refreshed balances screen.
+#[tauri::command]
+async fn set_account_label(
+    lock: tauri::State<'_, WriteLock>,
+    source_id: String,
+    label: String,
+) -> Result<Option<DashboardView>, String> {
+    let layout = storage_layout()?;
+    locked(&lock, || labels::set_label(&layout, &source_id, &label))?;
+    dashboard::load_dashboard(&layout)
 }
 
 #[tauri::command]
@@ -292,6 +306,7 @@ pub fn run() {
             load_earlier_transactions,
             get_transactions,
             set_merchant_category,
+            set_account_label,
             set_transaction_excluded,
             import_simplifi,
             get_spending_plan,

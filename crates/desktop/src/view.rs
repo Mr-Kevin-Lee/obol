@@ -16,6 +16,7 @@ use obol_core::{
     calculate_net_worth_from_records, AccountRecord, Category, NetWorth, Snapshot, Status,
 };
 use serde::Serialize;
+use std::collections::BTreeMap;
 
 /// Everything the balances screen needs for one render.
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -65,6 +66,9 @@ pub enum StatusView {
 pub struct AccountView {
     pub source_id: String,
     pub institution: String,
+    /// Your own name for the account, when you've set one. Filled in by
+    /// [`apply_labels`]; [`build`] leaves it empty.
+    pub label: Option<String>,
     pub account_type: String,
     pub balance: Option<f64>,
     pub currency: String,
@@ -102,6 +106,30 @@ pub fn build(snapshot: &Snapshot, previous: Option<&Snapshot>) -> DashboardView 
         liabilities,
         trend: Vec::new(),
     }
+}
+
+/// Puts your own names on the accounts, then re-sorts so a labelled
+/// account lands by its name among the others at the same institution.
+pub fn apply_labels(view: &mut DashboardView, labels: &BTreeMap<String, String>) {
+    for group in [&mut view.assets, &mut view.liabilities] {
+        for account in group.iter_mut() {
+            account.label = labels.get(&account.source_id).cloned();
+        }
+        sort_accounts(group);
+    }
+}
+
+/// Sources are fetched concurrently and recorded as they finish, so the
+/// snapshot's order changes run to run; a fixed order keeps rows still.
+fn sort_accounts(group: &mut [AccountView]) {
+    group.sort_by_cached_key(|a| {
+        (
+            a.institution.to_lowercase(),
+            a.label.as_deref().unwrap_or_default().to_lowercase(),
+            a.account_type.clone(),
+            a.source_id.clone(),
+        )
+    });
 }
 
 /// Net worth of each snapshot, oldest first. A snapshot whose net worth
@@ -143,17 +171,8 @@ fn partition(records: &[AccountRecord]) -> (Vec<AccountView>, Vec<AccountView>) 
         }
     }
 
-    // Sources are fetched concurrently and recorded as they finish, so the
-    // snapshot's order changes run to run; a fixed order keeps rows still.
-    for group in [&mut assets, &mut liabilities] {
-        group.sort_by_cached_key(|a| {
-            (
-                a.institution.to_lowercase(),
-                a.account_type.clone(),
-                a.source_id.clone(),
-            )
-        });
-    }
+    sort_accounts(&mut assets);
+    sort_accounts(&mut liabilities);
 
     (assets, liabilities)
 }
@@ -175,6 +194,7 @@ fn account_view(record: &AccountRecord) -> AccountView {
     AccountView {
         source_id: record.source_id().to_string(),
         institution: record.institution().to_string(),
+        label: None,
         account_type: record.account_type().to_string(),
         balance: record.balance(),
         currency: record.currency().to_string(),
@@ -321,6 +341,99 @@ mod tests {
     #[test]
     fn should_have_an_empty_trend_without_snapshots() {
         assert_eq!(trend(std::iter::empty()), Vec::<f64>::new());
+    }
+
+    fn labelled(accounts: Value, labels: &[(&str, &str)]) -> DashboardView {
+        let mut view = build(&snapshot_of(accounts), None);
+        let labels = labels
+            .iter()
+            .map(|(id, label)| (id.to_string(), label.to_string()))
+            .collect();
+        apply_labels(&mut view, &labels);
+        view
+    }
+
+    #[test]
+    fn should_put_a_label_on_the_matching_account() {
+        let view = labelled(
+            json!([account("c1", "Chase", "checking", "asset")]),
+            &[("c1", "Joint checking")],
+        );
+
+        assert_eq!(view.assets[0].label.as_deref(), Some("Joint checking"));
+    }
+
+    #[test]
+    fn should_leave_unlabelled_accounts_without_a_label() {
+        let view = labelled(
+            json!([
+                account("c1", "Chase", "checking", "asset"),
+                account("c2", "Chase", "savings", "asset"),
+            ]),
+            &[("c1", "Joint checking")],
+        );
+
+        let other = view.assets.iter().find(|a| a.source_id == "c2").unwrap();
+        assert_eq!(other.label, None);
+    }
+
+    #[test]
+    fn should_label_liabilities_too() {
+        let view = labelled(
+            json!([account("g1", "Chase", "credit_card", "liability")]),
+            &[("g1", "Travel card")],
+        );
+
+        assert_eq!(view.liabilities[0].label.as_deref(), Some("Travel card"));
+    }
+
+    #[test]
+    fn should_ignore_a_label_for_an_unknown_account() {
+        let view = labelled(
+            json!([account("c1", "Chase", "checking", "asset")]),
+            &[("gone", "Old account")],
+        );
+
+        assert_eq!(view.assets[0].label, None);
+    }
+
+    #[test]
+    fn should_order_one_institutions_accounts_by_label() {
+        let view = labelled(
+            json!([
+                account("a_first", "Chase", "checking", "asset"),
+                account("z_last", "Chase", "checking", "asset"),
+            ]),
+            &[("a_first", "Zeta"), ("z_last", "Alpha")],
+        );
+
+        assert_eq!(asset_ids(&view), vec!["z_last", "a_first"]);
+    }
+
+    #[test]
+    fn should_order_labels_ignoring_case() {
+        let view = labelled(
+            json!([
+                account("a_first", "Chase", "checking", "asset"),
+                account("z_last", "Chase", "checking", "asset"),
+            ]),
+            &[("a_first", "Beta"), ("z_last", "alpha")],
+        );
+
+        assert_eq!(asset_ids(&view), vec!["z_last", "a_first"]);
+    }
+
+    #[test]
+    fn should_still_order_by_institution_before_label() {
+        let view = labelled(
+            json!([
+                account("v", "Vanguard", "brokerage", "asset"),
+                account("c", "Chase", "checking", "asset"),
+            ]),
+            &[("v", "Aardvark"), ("c", "Zebra")],
+        );
+
+        assert_eq!(asset_ids(&view), vec!["c", "v"]);
     }
 
     fn asset_ids(view: &DashboardView) -> Vec<&str> {
@@ -516,6 +629,7 @@ mod tests {
             AccountView {
                 source_id: "chase".into(),
                 institution: "Chase".into(),
+                label: None,
                 account_type: "checking".into(),
                 balance: Some(1000.0),
                 currency: "USD".into(),

@@ -12,6 +12,8 @@ export type StatusView = 'ok' | 'error' | 'unknown'
 export interface AccountView {
   source_id: string
   institution: string
+  /** Your own name for the account; null until you set one. */
+  label: string | null
   account_type: string
   balance: number | null
   currency: string
