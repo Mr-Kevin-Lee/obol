@@ -160,6 +160,14 @@
     noteInput?.focus()
   })
 
+  // The row whose ⋮ menu is open. Any click elsewhere, or Escape, closes it.
+  let menuOpen = $state<string | null>(null)
+
+  function toggleMenu(event: MouseEvent, row: TransactionRow) {
+    event.stopPropagation()
+    menuOpen = menuOpen === keyOf(row) ? null : keyOf(row)
+  }
+
   function startNote(row: TransactionRow) {
     noteEditing = keyOf(row)
     noteDraft = row.note ?? ''
@@ -307,6 +315,11 @@
   })
 </script>
 
+<svelte:window
+  onclick={() => (menuOpen = null)}
+  onkeydown={(e) => e.key === 'Escape' && (menuOpen = null)}
+/>
+
 {#if error}
   <div class="banner error sticky" role="alert">{error}</div>
 {/if}
@@ -422,12 +435,12 @@
             <th scope="col">Merchant</th>
             <th scope="col">Account</th>
             <th scope="col">Category</th>
-            <th scope="col"><span class="visually-hidden">Bill</span></th>
             <th scope="col" class="amount" aria-sort={ariaSort('amount')}>
               <button type="button" class="sort" onclick={() => sortBy('amount')}>
                 Amount{#if sort.key === 'amount'}<span aria-hidden="true">{sort.ascending ? ' ↑' : ' ↓'}</span>{/if}
               </button>
             </th>
+            <th scope="col"><span class="visually-hidden">Actions</span></th>
           </tr>
         </thead>
         <tbody>
@@ -483,52 +496,61 @@
                   <span class="saving" role="status">Saving…</span>
                 {/if}
               </td>
-              <td class="actions">
-                <button
-                  type="button"
-                  class="toggle"
-                  aria-label={row.note
-                    ? `Edit the note on this ${row.merchant_name} transaction`
-                    : `Add a note to this ${row.merchant_name} transaction`}
-                  disabled={noteEditing === keyOf(row)}
-                  onclick={() => startNote(row)}
-                >
-                  {row.note ? 'Edit note' : '+ Note'}
-                </button>
-                {#if row.amount < 0 && !row.excluded && !NOT_SPENDING.has(row.category)}
-                  <button
-                    type="button"
-                    class="toggle"
-                    aria-pressed={row.bill}
-                    aria-label="Payments to {row.merchant_name} are a bill"
-                    title={row.bill
-                      ? `Payments to ${row.merchant_name} count as a bill; choose to remove it from the Spending plan`
-                      : `Add ${row.merchant_name} to the Spending plan as a bill of ${formatMoney(-row.amount)} due on the ${formatOrdinal(Number(row.posted.slice(8, 10)))}`}
-                    disabled={pending !== null}
-                    onclick={() => toggleBill(row)}
-                  >
-                    {row.bill ? '✓ Bill' : '+ Bill'}
-                  </button>
-                {/if}
-                {#if row.category !== 'Transfer'}
-                  <button
-                    type="button"
-                    class="toggle"
-                    aria-pressed={row.excluded}
-                    aria-label="Exclude this {row.merchant_name} transaction"
-                    title={row.excluded
-                      ? 'Left out of spending and the Spending plan; choose to count it again'
-                      : 'Leave just this transaction out of spending and the Spending plan'}
-                    disabled={pending !== null}
-                    onclick={() => toggleExcluded(row)}
-                  >
-                    {row.excluded ? 'Excluded' : 'Exclude'}
-                  </button>
-                {/if}
-              </td>
               <td class="amount" class:inflow={row.amount > 0}>
                 {formatSignedMoney(row.amount)}
                 {#if row.amount > 0}<span class="cue">in</span>{/if}
+              </td>
+              <td class="actions">
+                <button
+                  type="button"
+                  class="more"
+                  aria-haspopup="menu"
+                  aria-expanded={menuOpen === keyOf(row)}
+                  aria-label="More actions for this {row.merchant_name} transaction"
+                  onclick={(e) => toggleMenu(e, row)}
+                >
+                  <span aria-hidden="true">⋮</span>
+                </button>
+                {#if menuOpen === keyOf(row)}
+                  <div class="menu" role="menu">
+                    <button
+                      type="button"
+                      role="menuitem"
+                      disabled={noteEditing === keyOf(row)}
+                      onclick={() => startNote(row)}
+                    >
+                      {row.note ? 'Edit note' : 'Add note'}
+                    </button>
+                    {#if row.amount < 0 && !row.excluded && !NOT_SPENDING.has(row.category)}
+                      <button
+                        type="button"
+                        role="menuitemcheckbox"
+                        aria-checked={row.bill}
+                        title={row.bill
+                          ? `Payments to ${row.merchant_name} count as a bill; choose to remove it from the Spending plan`
+                          : `Add ${row.merchant_name} to the Spending plan as a bill of ${formatMoney(-row.amount)} due on the ${formatOrdinal(Number(row.posted.slice(8, 10)))}`}
+                        disabled={pending !== null}
+                        onclick={() => toggleBill(row)}
+                      >
+                        {row.bill ? '✓ Bill' : 'Mark as bill'}
+                      </button>
+                    {/if}
+                    {#if row.category !== 'Transfer'}
+                      <button
+                        type="button"
+                        role="menuitemcheckbox"
+                        aria-checked={row.excluded}
+                        title={row.excluded
+                          ? 'Left out of spending and the Spending plan; choose to count it again'
+                          : 'Leave just this transaction out of spending and the Spending plan'}
+                        disabled={pending !== null}
+                        onclick={() => toggleExcluded(row)}
+                      >
+                        {row.excluded ? '✓ Excluded' : 'Exclude'}
+                      </button>
+                    {/if}
+                  </div>
+                {/if}
               </td>
             </tr>
           {/each}
@@ -810,29 +832,57 @@
     color: var(--text-muted);
   }
 
-  /* Quiet until it's on, so a column of them doesn't shout. */
-  button.toggle {
-    font-size: 0.75rem;
+  /* Quiet until hovered, so a column of them doesn't shout. */
+  button.more {
     padding: 0.125rem 0.5rem;
-    white-space: nowrap;
+    font-size: 1rem;
+    line-height: 1;
     color: var(--text-muted);
     border-color: transparent;
     background: none;
   }
 
-  button.toggle:hover:not(:disabled) {
+  button.more:hover,
+  button.more[aria-expanded='true'] {
     border-color: var(--border);
   }
 
-  button.toggle[aria-pressed='true'] {
-    color: var(--blue);
-    border-color: var(--blue);
-    font-weight: 600;
+  .actions {
+    position: relative;
+    width: 1%;
+    text-align: right;
   }
 
-  /* Each button stays whole, but the row of them may wrap when space is tight. */
-  .actions {
-    min-width: 8rem;
+  .menu {
+    position: absolute;
+    top: 100%;
+    right: 0.5rem;
+    z-index: 10;
+    display: flex;
+    flex-direction: column;
+    min-width: 9rem;
+    padding: 0.25rem;
+    border: 1px solid var(--border);
+    border-radius: 0.5rem;
+    background: var(--surface);
+    box-shadow: 0 4px 12px rgb(0 0 0 / 0.15);
+  }
+
+  .menu button {
+    font-size: 0.8125rem;
+    text-align: left;
+    white-space: nowrap;
+    border-color: transparent;
+    background: none;
+  }
+
+  .menu button:hover:not(:disabled) {
+    border-color: var(--border);
+  }
+
+  .menu button[aria-checked='true'] {
+    color: var(--blue);
+    font-weight: 600;
   }
 
   /* Still listed so it can be counted again, but visibly out of the sums. */
