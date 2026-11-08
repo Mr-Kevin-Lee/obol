@@ -145,6 +145,8 @@ export interface CategoryBar {
 export interface TransactionRow {
   /** Pays a bill confirmed in the Spending plan, so it isn't discretionary. */
   bill: boolean
+  /** Its category has a target in the Spending plan: planned, not discretionary. */
+  has_target: boolean
   /** Left out of every total, bar and the Spending plan, by hand. */
   excluded: boolean
   source_id: string
@@ -162,9 +164,9 @@ export interface TransactionsView {
   spent_total: number
   /** Already sorted, most spent first. */
   categories: CategoryBar[]
-  /** spent_total without payments to confirmed bills. */
+  /** spent_total without confirmed bills or categories that have a target. */
   discretionary_spent_total: number
-  /** categories without payments to confirmed bills. */
+  /** categories without bills or targeted categories. */
   discretionary_categories: CategoryBar[]
   /** Already sorted, newest first. */
   transactions: TransactionRow[]

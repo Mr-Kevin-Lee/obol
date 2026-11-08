@@ -40,6 +40,9 @@ pub struct TransactionRow {
     /// Pays a bill confirmed in the Spending plan, so it isn't
     /// discretionary spending.
     pub bill: bool,
+    /// Its category has a target in the Spending plan, so it's planned
+    /// spending rather than discretionary.
+    pub has_target: bool,
     /// Left out of every total, bar and the Spending plan, by hand.
     pub excluded: bool,
     pub source_id: String,
@@ -64,9 +67,10 @@ pub struct TransactionsView {
     pub spent_total: f64,
     /// Spending categories, most spent first.
     pub categories: Vec<CategoryBar>,
-    /// `spent_total` without payments to confirmed bills.
+    /// `spent_total` without payments to confirmed bills or spending in
+    /// categories that have a target.
     pub discretionary_spent_total: f64,
-    /// `categories` without payments to confirmed bills.
+    /// `categories` without bills or targeted categories.
     pub discretionary_categories: Vec<CategoryBar>,
     /// Newest first.
     pub transactions: Vec<TransactionRow>,
@@ -161,12 +165,10 @@ pub fn transactions_view(
         .filter(|transaction| !plan.is_excluded(&transaction.transaction))
         .collect();
     let (spent_total, categories) = spending(counted.iter().copied());
-    let (discretionary_spent_total, discretionary_categories) = spending(
-        counted
-            .iter()
-            .copied()
-            .filter(|transaction| !is_bill_payment(&plan, transaction)),
-    );
+    let (discretionary_spent_total, discretionary_categories) =
+        spending(counted.iter().copied().filter(|transaction| {
+            !is_bill_payment(&plan, transaction) && !has_target(&plan, transaction)
+        }));
 
     Ok(TransactionsView {
         month: month.to_string(),
@@ -541,6 +543,12 @@ fn category_bars(spend: impl IntoIterator<Item = (String, f64)>) -> Vec<Category
         .collect()
 }
 
+/// Planned spending: its category has a target (even a $0 one). That
+/// spending is already budgeted for, so it isn't discretionary.
+fn has_target(plan: &PlanConfig, transaction: &CategorizedTransaction) -> bool {
+    plan.targets.contains_key(&transaction.category)
+}
+
 fn transaction_row(
     transaction: &CategorizedTransaction,
     labels: &HashMap<String, String>,
@@ -549,6 +557,7 @@ fn transaction_row(
     let source_id = &transaction.transaction.source_id;
     TransactionRow {
         bill: is_bill_payment(plan, transaction),
+        has_target: has_target(plan, transaction),
         excluded: plan.is_excluded(&transaction.transaction),
         source_id: source_id.clone(),
         id: transaction.transaction.id.clone(),
@@ -1512,6 +1521,88 @@ mod tests {
                 percentage: 100.0
             }]
         );
+    }
+
+    /// $50 of shopping (no target) beside $80 of groceries (target $600).
+    fn shopping_and_targeted_groceries(name: &str) -> StorageLayout {
+        let layout = temp_layout(name);
+        write_rules(&layout, &[("AMAZON", "Shopping"), ("SAFEWAY", "Groceries")]);
+        write_plan(&layout, "targets:\n  Groceries: 600.0\n");
+        write_transactions(
+            &layout,
+            vec![
+                tx("card", "a", "2026-10-21", -50.0, "AMAZON"),
+                tx("card", "g", "2026-10-22", -80.0, "SAFEWAY"),
+            ],
+        );
+        layout
+    }
+
+    #[test]
+    fn should_leave_categories_with_a_target_out_of_the_discretionary_total() {
+        let layout = shopping_and_targeted_groceries("disc-targeted-total");
+
+        let view = transactions_view(&layout, october()).unwrap();
+
+        assert_eq!(view.discretionary_spent_total, 50.0);
+    }
+
+    #[test]
+    fn should_leave_categories_with_a_target_out_of_the_discretionary_bars() {
+        let layout = shopping_and_targeted_groceries("disc-targeted-bars");
+
+        let view = transactions_view(&layout, october()).unwrap();
+
+        let names: Vec<&str> = view
+            .discretionary_categories
+            .iter()
+            .map(|bar| bar.category.as_str())
+            .collect();
+        assert_eq!(names, ["Shopping"]);
+    }
+
+    #[test]
+    fn should_still_count_targeted_categories_in_the_total_spent() {
+        let layout = shopping_and_targeted_groceries("disc-targeted-spent");
+
+        let view = transactions_view(&layout, october()).unwrap();
+
+        assert_eq!(view.spent_total, 130.0);
+    }
+
+    fn row_for<'a>(view: &'a TransactionsView, merchant_key: &str) -> &'a TransactionRow {
+        view.transactions
+            .iter()
+            .find(|row| row.merchant_key == merchant_key)
+            .unwrap()
+    }
+
+    #[test]
+    fn should_flag_a_row_whose_category_has_a_target() {
+        let layout = shopping_and_targeted_groceries("disc-flag-targeted");
+
+        let view = transactions_view(&layout, october()).unwrap();
+
+        assert!(row_for(&view, "SAFEWAY").has_target);
+    }
+
+    #[test]
+    fn should_not_flag_a_row_whose_category_has_no_target() {
+        let layout = shopping_and_targeted_groceries("disc-flag-untargeted");
+
+        let view = transactions_view(&layout, october()).unwrap();
+
+        assert!(!row_for(&view, "AMAZON").has_target);
+    }
+
+    #[test]
+    fn should_treat_a_zero_target_as_a_target() {
+        let layout = shopping_and_targeted_groceries("disc-zero-target");
+        write_plan(&layout, "targets:\n  Groceries: 0.0\n");
+
+        let view = transactions_view(&layout, october()).unwrap();
+
+        assert_eq!(view.discretionary_spent_total, 50.0);
     }
 
     #[test]

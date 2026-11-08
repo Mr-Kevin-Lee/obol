@@ -189,7 +189,8 @@
     (view?.transactions ?? []).filter(
       (t) =>
         (categoryFilter === null || t.category === categoryFilter) &&
-        (!discretionaryOnly || (!t.bill && !t.excluded && !NOT_SPENDING.has(t.category))),
+        (!discretionaryOnly ||
+          (!t.bill && !t.has_target && !t.excluded && !NOT_SPENDING.has(t.category))),
     ),
   )
   // The view arrives newest first. Amount sorts on the signed value, so
