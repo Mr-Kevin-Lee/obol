@@ -27,6 +27,8 @@ pub struct StorageLayout {
     pub simplefin_ignored: PathBuf,
     /// Which days of SimpleFIN transactions each source has (desktop only).
     pub simplefin_sync: PathBuf,
+    /// Your names for accounts, keyed by source id (desktop only).
+    pub account_labels: PathBuf,
     /// D44: one `YYYY-MM.json` per month (§11.4).
     pub transactions: PathBuf,
     /// D44: merchant key → category (§11.4).
@@ -44,6 +46,7 @@ impl StorageLayout {
             simplefin_usage: root.join("simplefin_usage.json"),
             simplefin_ignored: root.join("simplefin_ignored.json"),
             simplefin_sync: root.join("simplefin_sync.json"),
+            account_labels: root.join("account_labels.json"),
             transactions: root.join("transactions"),
             merchant_rules: root.join("merchant_rules.yaml"),
             plan: root.join("plan.yaml"),
@@ -77,9 +80,12 @@ pub fn resolve_storage_root(
 pub fn load_dashboard(layout: &StorageLayout) -> Result<Option<DashboardView>, String> {
     let recent = obol_core::load_recent_snapshots(&layout.snapshots, TREND_SNAPSHOTS)
         .map_err(|err| format!("snapshot history could not be read: {err}"))?;
+    // A broken labels file only costs the names, not the balances.
+    let labels = crate::labels::read_labels(layout).unwrap_or_default();
     Ok(recent.first().map(|newest| {
         let mut view = view::build(newest, recent.get(1));
         view.trend = view::trend(recent.iter());
+        view::apply_labels(&mut view, &labels);
         view
     }))
 }
@@ -150,6 +156,10 @@ pub async fn refresh_dashboard(
 
     let mut view = view::build(&result.snapshot, previous);
     view.trend = view::trend(std::iter::once(&result.snapshot).chain(before.iter()));
+    view::apply_labels(
+        &mut view,
+        &crate::labels::read_labels(layout).unwrap_or_default(),
+    );
 
     Ok(RefreshResult {
         view,
@@ -277,6 +287,56 @@ mod tests {
         assert_eq!(view.trend, vec![100.0, 250.0]);
     }
 
+    // --- labels ---
+
+    #[test]
+    fn should_show_a_saved_label_on_load() {
+        let layout = StorageLayout::under(&temp_root("label-load"));
+        save_snapshot_aged(
+            &layout.snapshots,
+            "2026-10-12T09:00:00-07:00",
+            100.0,
+            Duration::from_secs(86_400),
+        );
+        crate::labels::set_label(&layout, "chase", "Joint checking").unwrap();
+
+        let view = load_dashboard(&layout).unwrap().unwrap();
+
+        assert_eq!(view.assets[0].label.as_deref(), Some("Joint checking"));
+    }
+
+    #[test]
+    fn should_still_load_balances_when_the_labels_file_is_malformed() {
+        let layout = StorageLayout::under(&temp_root("label-malformed"));
+        save_snapshot_aged(
+            &layout.snapshots,
+            "2026-10-12T09:00:00-07:00",
+            100.0,
+            Duration::from_secs(86_400),
+        );
+        fs::write(&layout.account_labels, "not json").unwrap();
+
+        let view = load_dashboard(&layout).unwrap().unwrap();
+
+        assert_eq!(view.assets[0].label, None);
+    }
+
+    #[tokio::test]
+    async fn should_show_a_saved_label_after_a_refresh() {
+        let layout = StorageLayout::under(&temp_root("label-refresh"));
+        write_fixed_source(&layout);
+        crate::labels::set_label(&layout, "chase_checking", "Joint checking").unwrap();
+
+        let result = refresh_dashboard(&layout, &fixed_balance_registry(500.0), None)
+            .await
+            .unwrap();
+
+        assert_eq!(
+            result.view.assets[0].label.as_deref(),
+            Some("Joint checking")
+        );
+    }
+
     // --- resolve_storage_root ---
 
     #[test]
@@ -337,6 +397,7 @@ mod tests {
                 simplefin_usage: "/root/simplefin_usage.json".into(),
                 simplefin_ignored: "/root/simplefin_ignored.json".into(),
                 simplefin_sync: "/root/simplefin_sync.json".into(),
+                account_labels: "/root/account_labels.json".into(),
                 transactions: "/root/transactions".into(),
                 merchant_rules: "/root/merchant_rules.yaml".into(),
                 plan: "/root/plan.yaml".into(),

@@ -74,6 +74,11 @@
     }
   }
 
+  async function rename(sourceId: string, label: string) {
+    // The command returns the refreshed screen; a throw reaches the row.
+    view = await invoke<DashboardView | null>('set_account_label', { sourceId, label })
+  }
+
   function openForm() {
     linked = null
     adding = true
@@ -143,11 +148,17 @@
 {:else if view}
   <NetWorthHeader netWorth={view.net_worth} delta={view.delta} trend={view.trend} />
   <div class="groups">
-    <AccountGroup title="Assets" subtotal={view.assets_subtotal} accounts={view.assets} />
+    <AccountGroup
+      title="Assets"
+      subtotal={view.assets_subtotal}
+      accounts={view.assets}
+      onrename={rename}
+    />
     <AccountGroup
       title="Liabilities"
       subtotal={view.liabilities_subtotal}
       accounts={view.liabilities}
+      onrename={rename}
     />
   </div>
 {:else if inApp && !error && simplefinSources !== 0}
