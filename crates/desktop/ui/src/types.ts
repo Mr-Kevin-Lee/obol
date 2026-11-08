@@ -170,6 +170,9 @@ export interface TransactionsView {
   discretionary_spent_total: number
   /** categories without bills or targeted categories. */
   discretionary_categories: CategoryBar[]
+  /** The bills and targeted spending discretionary leaves out, by category.
+   *  Adding a category back sums its bar here with its discretionary one. */
+  left_out_categories: CategoryBar[]
   /** Already sorted, newest first. */
   transactions: TransactionRow[]
   uncategorized_count: number
