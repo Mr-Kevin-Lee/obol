@@ -34,6 +34,13 @@
       </p>
     {/if}
     <Sparkline points={trend} />
+  {:else if netWorth.kind === 'last_known'}
+    <p class="figure">{formatMoney(netWorth.value)}</p>
+    <p class="detail">
+      Last known, from {formatDate(netWorth.as_of)}. 0/{netWorth.total_sources} sources returned
+      data this run.
+    </p>
+    <Sparkline points={trend} />
   {:else if netWorth.total_sources === 0}
     <!-- Not the same thing as every source failing: there's nothing
          configured to have failed. -->

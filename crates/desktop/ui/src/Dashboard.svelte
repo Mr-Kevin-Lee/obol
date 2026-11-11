@@ -88,7 +88,8 @@
     adding = false
     linked = `Linked ${accounts(n)}.`
     await loadStatus()
-    if (n > 0) await refresh()
+    // A reconnect adds no accounts but still needs a fresh fetch to clear the banner.
+    if (n > 0 || view?.reconnect_simplefin) await refresh()
   }
 </script>
 
@@ -121,6 +122,17 @@
 {/if}
 {#if syncWarning}
   <div class="banner warning" role="status">{syncWarning}</div>
+{/if}
+{#if view?.reconnect_simplefin && inApp && !adding}
+  <div class="banner error dismissible" role="alert">
+    <span>
+      SimpleFIN no longer accepts this app's connection, so your balances can't update. Create a
+      new Setup Token in SimpleFIN Bridge and reconnect.
+    </span>
+    <button type="button" onclick={openForm} disabled={loading || refreshing}>
+      Reconnect SimpleFIN
+    </button>
+  </div>
 {/if}
 {#if linked}
   <div class="banner notice" role="status">{linked}</div>

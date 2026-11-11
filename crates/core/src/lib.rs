@@ -90,8 +90,8 @@ pub use simplefin_link::{
     normalize_account_type, LinkableAccount,
 };
 pub use simplefin_provider::{
-    register as register_simplefin, sanitize as sanitize_server_message, simplefin_access_url,
-    SimpleFinProvider,
+    is_access_revoked, register as register_simplefin, sanitize as sanitize_server_message,
+    simplefin_access_url, SimpleFinProvider,
 };
 pub use simplefin_sync::{
     earlier_window, history_windows, load_sync_state, recent_window, record_window,

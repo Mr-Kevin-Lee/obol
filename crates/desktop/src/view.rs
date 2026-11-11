@@ -13,8 +13,8 @@
 //! groups and maps.
 
 use obol_core::{
-    calculate_net_worth_from_records, parse_iso_date, AccountRecord, Category, NetWorth, Snapshot,
-    Status,
+    calculate_net_worth_from_records, is_access_revoked, parse_iso_date, AccountRecord, Category,
+    NetWorth, Snapshot, Status,
 };
 use serde::Serialize;
 use std::collections::BTreeMap;
@@ -39,6 +39,9 @@ pub struct DashboardView {
     /// Filled in by the dashboard loaders, which hold the history;
     /// [`build`] sees only two snapshots and leaves it empty.
     pub trend: Vec<TrendPoint>,
+    /// A source failed because SimpleFIN no longer accepts the saved Access
+    /// URL, so only a new Setup Token brings it back.
+    pub reconnect_simplefin: bool,
 }
 
 /// One snapshot's net worth on the day it was taken.
@@ -57,6 +60,15 @@ pub struct TrendPoint {
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum NetWorthView {
     Computed { value: f64 },
+    /// This run returned nothing, so this is the newest figure from an
+    /// earlier snapshot, labelled with its day rather than passed off as
+    /// current. Set by [`use_last_known_net_worth`], never by [`build`].
+    LastKnown {
+        value: f64,
+        /// `YYYY-MM-DD`.
+        as_of: String,
+        total_sources: usize,
+    },
     Unavailable { total_sources: usize },
 }
 
@@ -114,7 +126,29 @@ pub fn build(snapshot: &Snapshot, previous: Option<&Snapshot>) -> DashboardView 
         assets,
         liabilities,
         trend: Vec::new(),
+        reconnect_simplefin: snapshot.accounts.iter().any(|record| {
+            record.status() == Status::Error
+                && record.error_message().is_some_and(is_access_revoked)
+        }),
     }
+}
+
+/// When this run has no net worth at all, shows the newest one the trend
+/// holds instead of a failure. Needs the trend, so the loaders call it after
+/// filling that in. With nothing earlier, or no sources to have failed, the
+/// figure stays unavailable.
+pub fn use_last_known_net_worth(view: &mut DashboardView) {
+    let NetWorthView::Unavailable { total_sources } = view.net_worth else {
+        return;
+    };
+    let Some(last) = view.trend.last().filter(|_| total_sources > 0) else {
+        return;
+    };
+    view.net_worth = NetWorthView::LastKnown {
+        value: last.value,
+        as_of: last.date.clone(),
+        total_sources,
+    };
 }
 
 /// Puts your own names on the accounts, then re-sorts so a labelled
@@ -492,6 +526,111 @@ mod tests {
     #[test]
     fn should_have_an_empty_trend_without_snapshots() {
         assert_eq!(trend(std::iter::empty()), Vec::<TrendPoint>::new());
+    }
+
+    fn failed_snapshot(message: &str) -> Snapshot {
+        snapshot_of(json!([{
+            "account_key": "sha256:a", "source_id": "chase", "institution": "Chase",
+            "category": "asset", "type": "checking", "balance": null,
+            "currency": "USD", "status": "error", "error_message": message,
+        }]))
+    }
+
+    /// A view of an all-failed run with one earlier good snapshot behind it.
+    fn failed_run_after_good_one() -> DashboardView {
+        let failed = failed_snapshot("boom");
+        let mut view = build(&failed, None);
+        view.trend = trend([&failed, &snap(EARLIER, 100.0)].into_iter());
+        view
+    }
+
+    #[test]
+    fn should_fall_back_to_the_last_known_net_worth_when_this_run_has_none() {
+        let mut view = failed_run_after_good_one();
+
+        use_last_known_net_worth(&mut view);
+
+        assert_eq!(
+            view.net_worth,
+            NetWorthView::LastKnown {
+                value: 100.0,
+                as_of: "2026-10-19".into(),
+                total_sources: 1
+            }
+        );
+    }
+
+    #[test]
+    fn should_serialize_last_known_net_worth_as_a_tagged_value() {
+        let mut view = failed_run_after_good_one();
+        use_last_known_net_worth(&mut view);
+
+        assert_eq!(
+            serde_json::to_value(&view.net_worth).unwrap(),
+            json!({
+                "kind": "last_known", "value": 100.0,
+                "as_of": "2026-10-19", "total_sources": 1
+            })
+        );
+    }
+
+    #[test]
+    fn should_stay_unavailable_when_no_net_worth_was_ever_known() {
+        let mut view = build(&failed_snapshot("boom"), None);
+
+        use_last_known_net_worth(&mut view);
+
+        assert_eq!(
+            view.net_worth,
+            NetWorthView::Unavailable { total_sources: 1 }
+        );
+    }
+
+    #[test]
+    fn should_stay_unavailable_when_no_sources_are_configured() {
+        let mut view = build(&snapshot_of(json!([])), None);
+        view.trend = vec![point("2026-10-19", 100.0)];
+
+        use_last_known_net_worth(&mut view);
+
+        assert_eq!(
+            view.net_worth,
+            NetWorthView::Unavailable { total_sources: 0 }
+        );
+    }
+
+    #[test]
+    fn should_keep_a_computed_net_worth_over_an_older_one() {
+        let mut view = build(&snap(NOW, 300.0), None);
+        view.trend = vec![point("2026-10-19", 100.0)];
+
+        use_last_known_net_worth(&mut view);
+
+        assert_eq!(view.net_worth, NetWorthView::Computed { value: 300.0 });
+    }
+
+    const REVOKED: &str =
+        "authentication failed: access denied (HTTP 401): the Access URL is invalid or was revoked";
+
+    #[test]
+    fn should_ask_to_reconnect_when_the_access_url_was_revoked() {
+        let view = build(&failed_snapshot(REVOKED), None);
+
+        assert!(view.reconnect_simplefin);
+    }
+
+    #[test]
+    fn should_not_ask_to_reconnect_for_other_failures() {
+        let view = build(&failed_snapshot("operation timed out"), None);
+
+        assert!(!view.reconnect_simplefin);
+    }
+
+    #[test]
+    fn should_not_ask_to_reconnect_when_every_source_is_fine() {
+        let view = build(&snap(NOW, 300.0), None);
+
+        assert!(!view.reconnect_simplefin);
     }
 
     fn labelled(accounts: Value, labels: &[(&str, &str)]) -> DashboardView {

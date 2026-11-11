@@ -349,6 +349,13 @@ fn bridge_errors_suffix(set: &AccountSet) -> String {
     format!("; the Bridge reported: {}", reported.join("; "))
 }
 
+/// Whether a failed source's message says the Bridge refused the Access URL
+/// itself (revoked or invalid), which only a new Setup Token fixes. A bank
+/// needing sign-in again is also an auth failure but reads differently.
+pub fn is_access_revoked(message: &str) -> bool {
+    message.contains("the Access URL is invalid or was revoked")
+}
+
 fn map_simplefin_error(err: SimpleFinError) -> ProviderError {
     let detail = err.to_string();
     match err {
@@ -1060,6 +1067,20 @@ mod tests {
             .await
             .unwrap_err();
         assert!(!err.to_string().chars().any(|c| c.is_control()));
+    }
+
+    #[test]
+    fn should_recognize_the_access_denied_message_as_a_revoked_access_url() {
+        let message = map_simplefin_error(SimpleFinError::AccessDenied(401)).to_string();
+
+        assert!(is_access_revoked(&message));
+    }
+
+    #[test]
+    fn should_not_take_a_bank_sign_in_failure_for_a_revoked_access_url() {
+        assert!(!is_access_revoked(
+            "authentication failed: [con.auth] sign in at your bank again"
+        ));
     }
 
     #[tokio::test]

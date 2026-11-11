@@ -5,6 +5,8 @@
 
 export type NetWorthView =
   | { kind: 'computed'; value: number }
+  /** This run returned nothing: the newest figure from an earlier snapshot. */
+  | { kind: 'last_known'; value: number; as_of: string; total_sources: number }
   | { kind: 'unavailable'; total_sources: number }
 
 export type StatusView = 'ok' | 'error' | 'unknown'
@@ -29,6 +31,8 @@ export interface DeltaView {
 export interface DashboardView {
   created_at: string
   net_worth: NetWorthView
+  /** SimpleFIN no longer accepts the saved connection; a new Setup Token fixes it. */
+  reconnect_simplefin: boolean
   assets: AccountView[]
   liabilities: AccountView[]
   assets_subtotal: number

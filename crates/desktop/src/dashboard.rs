@@ -88,6 +88,7 @@ pub fn load_dashboard(layout: &StorageLayout) -> Result<Option<DashboardView>, S
     Ok(recent.first().map(|newest| {
         let mut view = view::build(newest, recent.get(1));
         view.trend = view::trend(recent.iter());
+        view::use_last_known_net_worth(&mut view);
         view::apply_labels(&mut view, &labels);
         view
     }))
@@ -160,6 +161,7 @@ pub async fn refresh_dashboard(
 
     let mut view = view::build(&result.snapshot, previous);
     view.trend = view::trend(std::iter::once(&result.snapshot).chain(before.iter()));
+    view::use_last_known_net_worth(&mut view);
     view::apply_labels(
         &mut view,
         &crate::labels::read_labels(layout).unwrap_or_default(),
